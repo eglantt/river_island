@@ -152,24 +152,25 @@ export function buildWorld(seed, Q) {
     group.add(new THREE.Mesh(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, fog: false }), 'mtn', 0, { MTN: '' })));
   }
   // ---------- horizon profile seen from the island (for sun / moon occlusion) ----------
-  const HZN = 720, horizon = new Float32Array(HZN);
+  const HZN = 720, horizon = new Float32Array(HZN), mtnHz = new Float32Array(HZN);
   {
     const eye = 2, cx = 0, cz = zc0;
     for (let i = 0; i < HZN; i++) {
       const az = i / HZN * Math.PI * 2, dx = Math.cos(az), dz = Math.sin(az);
-      let best = -0.2;
+      let best = -0.2, bm = -0.2;
       for (let d = 25; d < 5400; d *= 1.045) {
         const x = cx + dx * d, z = cz + dz * d, r = Math.hypot(x, z);
         let h = Math.abs(x) < 1200 && Math.abs(z) < 1200 ? H(x, z) : -50;
-        if (r > r0) h = Math.max(h, mh(r, Math.atan2(z, x)));
+        if (r > r0) { const m = mh(r, Math.atan2(z, x)); h = Math.max(h, m); if (r > r0 + 200) bm = Math.max(bm, Math.atan2(m - eye, d)); }
         best = Math.max(best, Math.atan2(h - eye, d));
       }
-      horizon[i] = best;
+      horizon[i] = best; mtnHz[i] = bm;
     }
   }
   {
     const d = new Uint8Array(HZN * 4);
-    for (let i = 0; i < HZN; i++) { const v = Math.max(0, Math.min(255, Math.round((horizon[i] + 0.05) / 0.4 * 255))); d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; d[i * 4 + 3] = 255; }
+    const enc = (e) => Math.max(0, Math.min(255, Math.round((e + 0.05) / 0.4 * 255)));
+    for (let i = 0; i < HZN; i++) { d[i * 4] = d[i * 4 + 1] = enc(horizon[i]); d[i * 4 + 2] = enc(mtnHz[i]); d[i * 4 + 3] = 255; }
     const t = new THREE.DataTexture(d, HZN, 1, THREE.RGBAFormat); t.wrapS = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
     if (U.tHzn.value) U.tHzn.value.dispose(); U.tHzn.value = t;
   }
@@ -425,10 +426,13 @@ export function buildWorld(seed, Q) {
   }
   {
     const n = Q.ff, pos = new Float32Array(n * 3), seeds = new Float32Array(n * 4);
-    const pts = reedPts.concat(flowerPts);
     for (let i = 0; i < n; i++) {
-      let p; const c = R() < 0.6 ? randIsland(1.0) : null;
-      if (c) p = new THREE.Vector3(c[0], H(c[0], c[1]) + 0.3 + R() * 1.4, c[1]); else p = pts.length ? pts[Math.floor(R() * pts.length)].clone().add(new THREE.Vector3((R() - 0.5) * 3, R(), (R() - 0.5) * 3)) : new THREE.Vector3();
+      let p = null;
+      for (let t = 0; t < 60 && !p; t++) {
+        if (R() < 0.65) { const c = randIsland(0.8, 5); if (c && H(c[0], c[1]) > 0.35) p = new THREE.Vector3(c[0], H(c[0], c[1]) + 0.4 + R() * 1.2, c[1]); }
+        else { const x = (R() * 2 - 1) * 160, z = mz(x) + (R() < 0.5 ? -1 : 1) * (HW + 6 + R() * 20), h = H(x, z); if (h > 0.8) p = new THREE.Vector3(x, h + 0.4 + R() * 1.2, z); }
+      }
+      if (!p) p = new THREE.Vector3(0, -50, 0);
       pos.set([p.x, p.y, p.z], i * 3); seeds.set([R() + 0.3, R() + 0.3, R() + 0.3, R()], i * 4);
     }
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('seed', new THREE.BufferAttribute(seeds, 4));

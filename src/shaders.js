@@ -111,7 +111,7 @@ export function skyMaterial() {
       varying vec3 vDir;
       void main(){ vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }`,
     fragmentShader: /* glsl */`
-      uniform sampler2D tNoise; uniform vec2 uCloudOff; uniform float uCover, uDark, uSunVis, uNight, uMoonPhase, uMoonVis, uTime, uFlash;
+      uniform sampler2D tNoise, tHzn; uniform vec2 uCloudOff; uniform float uCover, uDark, uSunVis, uNight, uMoonPhase, uMoonVis, uTime, uFlash;
       uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uSkyFog; uniform float uFogSky;
       varying vec3 vDir;
       ${CLOUD}${SKYFN}
@@ -168,6 +168,14 @@ export function skyMaterial() {
           float a = cov * smoothstep(0.0, 0.12, d.y) * (0.72 + 0.28*uCover);
           col = mix(col, cc, a);
           col = mix(col, uHor, (1.0 - smoothstep(0.0, 0.06, d.y)) * 0.6);
+        }
+        {
+          float u = fract(atan(d.z, d.x) / 6.2831853 + 1.0);
+          float hz = texture2D(tHzn, vec2(u, 0.5)).b * 0.4 - 0.05;
+          float m = smoothstep(hz + 0.003, hz - 0.003, asin(clamp(d.y, -1.0, 1.0)));
+          float sdm = max(dot(d, uSunDir), 0.0), sunLow = 1.0 - smoothstep(0.04, 0.4, uSunDir.y);
+          vec3 mcol = mix(uSkyFog, uHor + uGlow * pow(sdm, 4.0) * 0.22 * (1.0 - uDark), 0.55 * (1.0 - uFogSky)) * (0.8 - 0.32 * pow(sdm, 3.0) * sunLow * (1.0 - uDark));
+          col = mix(col, mcol, m);
         }
         float hb = uFogSky * (1.0 - smoothstep(-0.02, 0.22 + 0.55*uFogSky, d.y));
         col = mix(col, uSkyFog, max(hb, uFogSky*uFogSky*0.8));
@@ -320,8 +328,8 @@ export function pointsMaterial(kind) {
       void main(){
         vec3 p = position;
         ${ff ? `
-          p += vec3(sin(uTime*0.4*seed.x + seed.y*6.0)*1.4, sin(uTime*0.6*seed.y + seed.z*5.0)*0.45, cos(uTime*0.35*seed.z + seed.x*4.0)*1.4);
-          vB = pow(max(sin(uTime*(0.9 + seed.w*1.3) + seed.x*20.0), 0.0), 3.0);
+          p += vec3(sin(uTime*0.4*seed.x + seed.y*6.0)*0.6, sin(uTime*0.6*seed.y + seed.z*5.0)*0.3, cos(uTime*0.35*seed.z + seed.x*4.0)*0.6);
+          vB = pow(max(sin(uTime*(0.35 + seed.w*0.5) + seed.x*20.0), 0.0), 14.0);
         ` : `
           vec3 box = vec3(14.0, 6.0, 14.0);
           vec3 q = seed.xyz*box + vec3(uTime*0.12, sin(uTime*0.3 + seed.w*6.0)*0.4 + uTime*0.03, uTime*0.07);
