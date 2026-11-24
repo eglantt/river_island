@@ -329,7 +329,9 @@ export function pointsMaterial(kind) {
         vec3 p = position;
         ${ff ? `
           p += vec3(sin(uTime*0.4*seed.x + seed.y*6.0)*0.6, sin(uTime*0.6*seed.y + seed.z*5.0)*0.3, cos(uTime*0.35*seed.z + seed.x*4.0)*0.6);
-          vB = pow(max(sin(uTime*(0.35 + seed.w*0.5) + seed.x*20.0), 0.0), 14.0);
+          // slow glow: ~2-3 s lit with soft fade in/out, then a few seconds dark
+          float ph = fract(uTime * (0.09 + seed.w * 0.06) + seed.x * 7.13);
+          vB = smoothstep(0.0, 0.08, ph) * (1.0 - smoothstep(0.26, 0.4, ph)) * (0.85 + 0.15 * sin(uTime * 3.0 + seed.y * 30.0));
         ` : `
           vec3 box = vec3(14.0, 6.0, 14.0);
           vec3 q = seed.xyz*box + vec3(uTime*0.12, sin(uTime*0.3 + seed.w*6.0)*0.4 + uTime*0.03, uTime*0.07);
@@ -337,8 +339,8 @@ export function pointsMaterial(kind) {
           vB = 0.4 + 0.6*sin(uTime*2.0 + seed.w*30.0)*0.5 + 0.3;
         `}
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        gl_PointSize = ${ff ? '24.0' : '5.0'} * uPx / -mv.z;
-        ${ff ? 'gl_PointSize = clamp(gl_PointSize, 2.0, 40.0);' : 'gl_PointSize = clamp(gl_PointSize, 1.0, 3.0); vB *= smoothstep(7.0, 1.5, -mv.z);'}
+        gl_PointSize = ${ff ? '0.32' : '0.03'} * uPx / -mv.z;
+        ${ff ? 'vB *= clamp(gl_PointSize / 4.0, 0.4, 1.0); gl_PointSize = clamp(gl_PointSize, 2.5, 30.0);' : 'gl_PointSize = clamp(gl_PointSize, 1.0, 3.0); vB *= smoothstep(7.0, 1.5, -mv.z);'}
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */`

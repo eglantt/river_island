@@ -9,7 +9,7 @@ import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
 import { createAudio } from './audio.js';
 
-const VERSION = '0.0.3';
+const VERSION = '0.0.4';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -18,9 +18,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 160, grass: 11000, flowers: 380, reeds: 900, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, dust: 60, bf: 8, df: 4 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 220, grass: 24000, flowers: 800, reeds: 1600, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, dust: 120, bf: 14, df: 6 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.5), terr: 230, mtn: 300, grass: 45000, flowers: 1500, reeds: 2600, forest: 2300, far: 900, shadows: 2048, bloom: 1, rain: 8000, ff: 45, dust: 200, bf: 22, df: 8 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 160, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, dust: 60, bf: 8, df: 4 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 220, grass: 24000, flowers: 800, reeds: 3200, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, dust: 120, bf: 14, df: 6 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.5), terr: 230, mtn: 300, grass: 45000, flowers: 1500, reeds: 5200, forest: 2300, far: 900, shadows: 2048, bloom: 1, rain: 8000, ff: 45, dust: 200, bf: 22, df: 8 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -66,7 +66,7 @@ function applyRenderQuality() {
   let pr = Q.scale;
   const px = innerWidth * innerHeight * pr * pr; if (px > 3.2e6) pr *= Math.sqrt(3.2e6 / px);
   renderer.setPixelRatio(pr); renderer.setSize(innerWidth, innerHeight, false);
-  U.uPx.value = innerHeight * pr * 0.5;
+  
   renderer.shadowMap.enabled = !!Q.shadows; sun.castShadow = !!Q.shadows;
   if (Q.shadows) {
     sun.shadow.mapSize.set(Q.shadows, Q.shadows); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; }
@@ -80,6 +80,7 @@ function applyRenderQuality() {
     composer.setPixelRatio(pr); composer.setSize(innerWidth, innerHeight);
   }
   camera.aspect = innerWidth / innerHeight; camera.fov = camera.aspect < 1 ? 78 : 66; camera.updateProjectionMatrix();
+  U.uPx.value = innerHeight * pr * 0.5 / Math.tan(camera.fov * Math.PI / 360); // pixels per metre at 1 m
   scene.traverse((o) => { if (o.material && 'needsUpdate' in o.material) o.material.needsUpdate = true; });
 }
 

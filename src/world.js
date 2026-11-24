@@ -353,12 +353,29 @@ export function buildWorld(seed, Q) {
     });
   }
   // reeds along all shores (island + near banks)
-  const reedPts = [];
+  const reedPts = [], reedClusters = [];
   {
-    const g = bladeGeo(0.05, 5, C('#9aa457'), C('#3e5a2a'), 0.25);
+    // clump centres: island shoreline and both river banks
+    for (let t = 0; t < 4000 && reedClusters.length < 26; t++) {
+      const u = (R() * 2 - 1) * irx * 1.4, v = (R() * 2 - 1) * irz * 1.4, x = u * ca - v * sa, z = zc0 + u * sa + v * ca, h = H(x, z);
+      if (h < 0.15 && h > -0.3) reedClusters.push([x, z, 1.2 + R() * 2.2]);
+    }
+    for (let t = 0; t < 6000 && reedClusters.length < 70; t++) {
+      const x = (R() * 2 - 1) * 260, z = mz(x) + (R() < 0.5 ? -1 : 1) * (HW + (R() * 2 - 1) * 9), h = H(x, z);
+      if (h < 0.2 && h > -0.35) reedClusters.push([x, z, 1.5 + R() * 3.5]);
+    }
+    const g = bladeGeo(0.08, 5, C('#a2a85a'), C('#3e5a2a'), 0.25);
     meshes.reeds = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'reed', 0.35, { GUST: '', NOFLIP: '' }), Q.reeds, (d) => {
       for (let t = 0; t < 30; t++) {
         let x, z;
+        if (reedClusters.length && R() < 0.7) {
+          // dense clumps along the shores
+          const c = reedClusters[Math.floor(R() * reedClusters.length)], rr = c[2] * Math.sqrt(-2 * Math.log(R() + 1e-6)) * 0.55, an = R() * 6.283;
+          x = c[0] + Math.cos(an) * rr; z = c[1] + Math.sin(an) * rr;
+          const h = H(x, z); if (h > 0.3 || h < -0.5) continue;
+          d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.15, R() * 6.28, (R() - 0.5) * 0.15); d.scale.set(1 + R() * 0.8, 1.3 + R() * 1.3, 1);
+          return white;
+        }
         if (R() < 0.45) { const u = (R() * 2 - 1) * irx * 1.4, v = (R() * 2 - 1) * irz * 1.4; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
         else { x = (R() * 2 - 1) * 220; z = mz(x) + (R() < 0.5 ? -1 : 1) * (HW + (R() * 2 - 1) * 9); }
         const h = H(x, z); if (h > 0.25 || h < -0.45) continue;
