@@ -9,7 +9,7 @@ import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
 import { createAudio } from './audio.js';
 
-const VERSION = '0.0.4';
+const VERSION = '0.0.5';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -18,9 +18,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 160, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, dust: 60, bf: 8, df: 4 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 220, grass: 24000, flowers: 800, reeds: 3200, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, dust: 120, bf: 14, df: 6 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.5), terr: 230, mtn: 300, grass: 45000, flowers: 1500, reeds: 5200, forest: 2300, far: 900, shadows: 2048, bloom: 1, rain: 8000, ff: 45, dust: 200, bf: 22, df: 8 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, dust: 60, bf: 8, df: 4 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 3200, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, dust: 120, bf: 14, df: 6 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.5), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 5200, forest: 2300, far: 900, shadows: 2048, bloom: 1, rain: 8000, ff: 45, dust: 200, bf: 22, df: 8 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -193,6 +193,7 @@ function updateEnv(dt) {
   // occlusion by the ridge line (horizon profile)
   const occ = (d) => { const hz = world.horizonEl(Math.atan2(d.z, d.x)); return sm(hz - 0.004, hz + 0.01, Math.asin(d.y)); };
   const sOcc = occ(sd), mOcc = occ(md);
+  { const hzM = world.horizonMtn(Math.atan2(sd.z, sd.x)); U.uSunOccM.value = sm(hzM - 0.004, hzM + 0.008, Math.asin(sd.y)); }
   U.uSunOcc.value = sOcc; U.uMoonOcc.value = mOcc;
   // lights
   if (el > -2.5) { sun.color.copy(sc); sun.intensity = 2.7 * sunInt * sOcc; sun.position.copy(sd); }
@@ -294,12 +295,13 @@ $('close').addEventListener('click', closePanel);
 const fmt = (h) => { const m = Math.floor((h % 1) * 60); return `${String(Math.floor(h) % 24).padStart(2, '0')}:${String(m).padStart(2, '0')}`; };
 function seg(id, val) { document.querySelectorAll(`#${id} button`).forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.v === String(val)))); }
 function syncUI() {
-  seg('speed', S.paused ? 'pause' : S.cycle); seg('wx', S.weather); seg('qual', S.quality); seg('mode', S.mode);
+  seg('speed', S.cycle); $('pause').checked = S.paused; seg('wx', S.weather); seg('qual', S.quality); seg('mode', S.mode);
   $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); $('auto').checked = S.auto; $('wind').value = S.wind; $('vol').value = S.volume;
   $('showclock').checked = S.clock; $('showfps').checked = S.fps;
   $('qnote').textContent = S.quality === 'auto' ? `Сейчас: ${Q.name.toLowerCase()}` : '';
 }
-$('speed').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; if (v === 'pause') S.paused = !S.paused; else { S.cycle = +v; S.paused = false; } save(); syncUI(); });
+$('speed').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.cycle = +v; save(); syncUI(); });
+$('pause').addEventListener('change', (e) => { S.paused = e.target.checked; save(); });
 $('preset').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.hour = +v; save(); syncUI(); });
 $('hour').addEventListener('input', (e) => { S.hour = +e.target.value; $('hourval').textContent = fmt(S.hour); });
 $('hour').addEventListener('change', save);
