@@ -1,0 +1,15 @@
+{
+  "name": "river-island",
+  "version": "0.0.2",
+  "description": "Остров на реке — процедурная 3D-сцена в одном HTML-файле",
+  "scripts": {
+    "build": "bash build.sh"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
