@@ -67,9 +67,10 @@ export function buildWorld(seed, Q) {
     return Math.hypot(u / irx, v / irz) + 0.13 * N.n2(x * 0.055 + 11, z * 0.055) + 0.05 * N.n2(x * 0.19, z * 0.19);
   }
   // cliff bank: one stretch of a river bank becomes a 3-5 m earth cliff
-  const cliffSide = R() < 0.5 ? -1 : 1, cliffX = -75 + R() * 40, cliffL = 75, cxa = cliffX - cliffL / 2, cxb = cliffX + cliffL / 2;
-  const cliffFall = (x) => sm(cxa, cxa + 14, x) * (1 - sm(cxb - 14, cxb, x));
-  const cliffTop = (x) => 0.6 + (3.6 + 1.3 * N.n2(x * 0.045, 3.3)) * cliffFall(x);
+  const cliffSide = R() < 0.5 ? -1 : 1, cliffX = -22 + R() * 44, cliffL = 80, cxa = cliffX - cliffL / 2, cxb = cliffX + cliffL / 2;
+  const cliffFall = (x) => sm(cxa, cxa + 20, x) * (1 - sm(cxb - 20, cxb, x));
+  const cliffTop = (x) => 0.6 + (3.4 + 1.5 * N.n2(x * 0.05, 3.3) + 0.3 * N.n2(x * 0.13, 1.7)) * cliffFall(x);
+  const cliffOff = (x) => 3.4 + 1.4 * N.n2(x * 0.07, 5.5) + 0.35 * N.n2(x * 0.17, 2.1);
   const hwAt = (x) => HW + 3 * N.n2(x * 0.008, 7.7);
   function H(x, z) {
     const zc = mz(x), d = Math.abs(z - zc);
@@ -79,7 +80,13 @@ export function buildWorld(seed, Q) {
     h += sm(hw + 8, hw + 95, d) * (N.fbm(x * 0.006, z * 0.006, 4) * 0.5 + 0.5) * 24;
     h += N.n2(x * 0.05, z * 0.05) * 0.25 * sm(hw - 2, hw + 12, d);
     if (x > cxa && x < cxb && Math.sign(z - zc) === cliffSide) {
-      const f = cliffFall(x); if (f > 0) h = Math.max(h, h + (cliffTop(x) + (d - hw - 7) * 0.02 - h) * sm(hw + 3, hw + 7, d) * f);
+      const f = cliffFall(x);
+      if (f > 0) {
+        const d0 = hw + cliffOff(x), wd = 0.6 + (1 - f) * 3.5, T = cliffTop(x);
+        const talus = 0.35 * sm(hw - 0.5, d0 - wd, d) * (1 - sm(d0 - wd, d0, d));
+        const target = Math.max(h, 0.15 + talus) + (T + Math.max(0, d - d0 - wd) * 0.015 - Math.max(h, 0.15 + talus)) * sm(d0 - wd, d0 + wd, d);
+        h = Math.max(h, h + (target - h) * f * sm(hw - 1.5, hw - 0.3, d));
+      }
     }
     const e = islandE(x, z);
     if (e < 1.6) {
@@ -94,12 +101,16 @@ export function buildWorld(seed, Q) {
   // ---------- terrain ----------
   const TS = 1200, seg = Q.terr, a = 0.09;
   const map = (u) => TS * (a * u + (1 - a) * u * u * u);
+  // across the river: uniform ~0.9-1.4 m spacing within 75 m of the river axis, coarse beyond
+  const ZB = 75, VB = 0.72, AZ = (ZB / VB) * (1 - VB) / (TS - ZB);
+  const mapZ = (v) => { const s = Math.sign(v), av = Math.abs(v); if (av <= VB) return ZB * v / VB; const t = (av - VB) / (1 - VB); return s * (ZB + (TS - ZB) * (AZ * t + (1 - AZ) * t * t * t)); };
+  const shiftZ = (v) => { const av = Math.abs(v); return av <= VB ? 1 : 1 - (av - VB) / (1 - VB); };
   const tg = new THREE.PlaneGeometry(2, 2, seg, seg); tg.rotateX(-Math.PI / 2);
   const tp = tg.attributes.position, cols = new Float32Array(tp.count * 3);
   const cSand = C('#b7a27a'), cWet = C('#6e6146'), cBed = C('#4d4a35'), cBedDeep = C('#2f3a2b'), cGrass = C('#5f8f3a'), cGrass2 = C('#86a043'), cGrass3 = C('#4a7a30'), cDirt = C('#735f42'), cForest = C('#2f4a24'), cMoss = C('#3e5e2c');
   const tmp = new THREE.Color();
   for (let i = 0; i < tp.count; i++) {
-    const x = map(tp.getX(i)), z = map(tp.getZ(i)) + mz(map(tp.getX(i))) * (1 - Math.min(1, Math.abs(tp.getZ(i)) * 3));
+    const x = map(tp.getX(i)), z = mapZ(tp.getZ(i)) + mz(x) * shiftZ(tp.getZ(i));
     const h = H(x, z); tp.setXYZ(i, x, h, z);
     const sl = Math.min(1, (Math.abs(H(x + 1, z) - h) + Math.abs(H(x, z + 1) - h)) * 0.9);
     const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z);
@@ -334,41 +345,12 @@ export function buildWorld(seed, Q) {
       rockAcc.add(blobGeo(N, cc, r, 0.6, 0, 0.25), () => tmp.copy(cB2).multiplyScalar(0.75 + R() * 0.4), () => 0);
     }
   }
-  // cliff wall mesh (strata of soil, clay and sand), with fallen stones at its foot
+  // fallen stones at the foot of the cliff
   {
-    const cols = Math.ceil(cliffL / 0.5), rows = 14, capRows = 3, A = cols + 1, pos = [], col = [], idx = [];
-    const cGravel = C('#8a8070'), cSand = C('#dcc497'), cClay = C('#c07a4c'), cOchre = C('#cfa063'), cSoil = C('#5e4a33'), cGr = C('#5f8a3a');
-    for (let j = 0; j <= rows + capRows; j++) for (let i = 0; i <= cols; i++) {
-      const x = cxa + i * 0.5, zc = mz(x), hw = hwAt(x), T = cliffTop(x), f = cliffFall(x);
-      let y, dd;
-      if (j <= rows) {
-        const t = j / rows; y = -0.7 + (T + 0.85) * t;
-        let inn = -0.55 * (1 - t) * (1 - t) + 0.5 * N.n2(x * 0.33, y * 0.5) + 0.22 * N.n2(x * 1.3, y * 1.8) + t * 0.9 * f;
-        if (t > 0.9) inn -= 0.35 * (t - 0.9) / 0.1 * f;
-        dd = hw + 0.4 + inn;
-      } else {
-        const k = j - rows; y = T + 0.15 - k * 0.03; dd = hw + 1.0 + 0.9 * f + k * 2.2;
-      }
-      pos.push(x, y, zc + cliffSide * dd);
-      const s = y + 0.35 * N.n2(x * 0.12, 9.1) + 0.05 * N.n2(x * 0.8, y * 3);
-      if (j > rows - 1) tmp.copy(cGr).multiplyScalar(0.85 + 0.25 * N.n2(x, 2.2));
-      else if (s < 0.35) tmp.copy(cGravel);
-      else if (s > T - 0.55) tmp.copy(cSoil);
-      else { const band = Math.sin(s * 3.1 + N.n2(x * 0.05, 4) * 1.5); tmp.copy(band > 0.35 ? cClay : band < -0.4 ? cSand : cOchre); }
-      tmp.multiplyScalar(0.9 + 0.15 * N.n2(x * 2.1, y * 2.7));
-      col.push(tmp.r, tmp.g, tmp.b);
-    }
-    for (let j = 0; j < rows + capRows; j++) for (let i = 0; i < cols; i++) { const a0 = j * A + i; idx.push(a0, a0 + 1, a0 + A, a0 + 1, a0 + A + 1, a0 + A); }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    g.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
-    g.setIndex(idx); g.computeVertexNormals();
-    const m = new THREE.Mesh(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'cliff', 0, { DETAIL: '', NOFLIP: '' }));
-    m.receiveShadow = true; group.add(m);
     const cR = C('#7a7266');
-    for (let k = 0; k < 14; k++) {
-      const x = cxa + 10 + R() * (cliffL - 20); if (cliffFall(x) < 0.5) continue;
-      const r = 0.2 + R() * 0.7, dd = hwAt(x) - 0.4 + R() * 1.2, z = mz(x) + cliffSide * dd, cc = new THREE.Vector3(x, Math.max(H(x, z), -0.5) + r * 0.2, z);
+    for (let k = 0; k < 16; k++) {
+      const x = cxa + 12 + R() * (cliffL - 24); if (cliffFall(x) < 0.6) continue;
+      const r = 0.2 + R() * 0.6, dd = hwAt(x) + cliffOff(x) - 2.2 + R() * 1.4, z = mz(x) + cliffSide * dd, cc = new THREE.Vector3(x, H(x, z) + r * 0.15, z);
       rockAcc.add(blobGeo(N, cc, r, 0.7, 1, 0.25), (v, n) => tmp.copy(cR).multiplyScalar(0.7 + 0.35 * Math.max(0, n.y)), () => 0);
     }
   }
@@ -508,7 +490,7 @@ export function buildWorld(seed, Q) {
       for (let t = 0; t < 40; t++) {
         const far = R() < Q.far / (Q.far + Q.forest);
         const x = (R() * 2 - 1) * (far ? 1050 : 430), side = R() < 0.5 ? -1 : 1;
-        const bd = far ? 60 + R() * 900 : 10 + Math.pow(R(), 2.2) * 200;
+        const bd = far ? 60 + R() * 900 : 6 + Math.pow(R(), 2.2) * 200;
         const z = mz(x) + side * (HW + bd);
         if (Math.abs(z) > 1150) continue;
         const h = H(x, z); if (h < 0.7) continue;
@@ -571,7 +553,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { group, meshes, cliff: { x: cliffX, side: cliffSide, top: cliffTop }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, flowerPts, reedPts, spawn, onIsland };
+  return { group, meshes, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {

@@ -65,6 +65,22 @@ export function patch(mat, key, amp = 0, defs = {}) {
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
     sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      #ifdef DETAIL
+        {
+          // exposed earth with strata on steep banks (cliff)
+          float steep = 1.0 - smoothstep(0.58, 0.86, normalize(vWN).y);
+          steep *= smoothstep(-0.4, 0.2, vWp.y) * (1.0 - smoothstep(9.0, 14.0, vWp.y));
+          if (steep > 0.001) {
+            float ny = vWp.y + (texture2D(tNoise, vWp.xz * 0.05).r - 0.5) * 0.9 + (texture2D(tNoise, vWp.xz * 0.6).a - 0.5) * 0.12;
+            float band = sin(ny * 2.4) * 0.5 + 0.5, band2 = sin(ny * 6.3 + 1.7) * 0.5 + 0.5;
+            vec3 loam = vec3(0.36, 0.22, 0.12), sand = vec3(0.62, 0.48, 0.30), clay = vec3(0.52, 0.29, 0.15);
+            vec3 sc = mix(mix(loam, clay, smoothstep(0.35, 0.65, band)), sand, smoothstep(0.62, 0.9, band2) * 0.8);
+            sc *= 0.85 + 0.3 * texture2D(tNoise, vWp.xz * 1.7 + vWp.y).g;
+            sc = mix(sc, vec3(0.16, 0.13, 0.10), 1.0 - smoothstep(0.1, 0.7, vWp.y));
+            diffuseColor.rgb = mix(diffuseColor.rgb, sc, steep);
+          }
+        }
+      #endif
       #ifdef MTN
         float snl = vWp.y + (texture2D(tNoise, vWp.xz * 0.0011).r - 0.5) * 240.0 + (texture2D(tNoise, vWp.xz * 0.0067).a - 0.5) * 70.0;
         float snow = smoothstep(640.0, 700.0, snl) * smoothstep(0.52, 0.72, normalize(vWN).y);
