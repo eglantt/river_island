@@ -29,16 +29,16 @@ export function makeFoliageAtlas(size) {
       const a = b / 9 * Math.PI * 2 + R() * 0.4, L = (70 + R() * 45) * s, ex = cx + Math.cos(a) * L, ey = cy + Math.sin(a) * L;
       twig(cx, cy, ex, ey, 2.2 * s);
     }
-    for (let i = 0; i < 520; i++) {
+    for (let i = 0; i < 950; i++) {
       const a = R() * Math.PI * 2, rr = Math.pow(R(), 0.6) * 118 * s, x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr * 0.92;
       const sh = shade(x, y, cx, cy, 118 * s), l = 20 + sh * 22 + R() * 9, h = 88 + R() * 26 - (R() < 0.06 ? 30 : 0);
-      leaf(x, y, a + (R() - 0.5) * 1.6, (12 + R() * 9) * s, (5 + R() * 3) * s, hsl(h, 28 + R() * 16, l * 0.92), true);
+      leaf(x, y, a + (R() - 0.5) * 1.6, (9 + R() * 7) * s, (4 + R() * 2.4) * s, hsl(h, 28 + R() * 16, l * 0.92), true);
     }
   });
   // 1: birch spray, fine drooping twigs with small leaves
   inTile(1, () => {
-    for (let b = 0; b < 14; b++) {
-      let x = (30 + R() * 196) * s, y = (10 + R() * 40) * s; const len = 7 + Math.floor(R() * 8);
+    for (let b = 0; b < 24; b++) {
+      let x = (20 + R() * 216) * s, y = (10 + R() * 40) * s; const len = 7 + Math.floor(R() * 8);
       for (let k = 0; k < len; k++) {
         const nx = x + (R() - 0.5) * 16 * s, ny = y + (13 + R() * 7) * s; twig(x, y, nx, ny, 1.1 * s, 'rgba(60,50,40,0.8)');
         for (let q = 0; q < 4; q++) leaf(nx + (R() - 0.5) * 8 * s, ny + (R() - 0.5) * 8 * s, Math.PI / 2 + (R() - 0.5) * 2.2, (6 + R() * 4) * s, (3 + R() * 1.5) * s, hsl(78 + R() * 20, 34 + R() * 14, 26 + R() * 20 + (y / s / 256) * 4), false);
@@ -62,12 +62,12 @@ export function makeFoliageAtlas(size) {
   inTile(3, () => {
     const y0 = 110 * s;
     twig(4 * s, y0, 250 * s, y0 + 14 * s, 4 * s, 'rgba(55,40,28,1)');
-    for (let k = 0; k < 13; k++) {
-      const t = k / 13, bx = (14 + t * 230) * s, by = y0 + t * 14 * s, L = (95 - t * 60) * s;
+    for (let k = 0; k < 18; k++) {
+      const t = k / 18, bx = (14 + t * 230) * s, by = y0 + t * 14 * s, L = (100 - t * 62) * s;
       for (const sd of [-1, 1]) {
         const ex = bx + L * 0.55, ey = by + sd * L * 0.65; twig(bx, by, ex, ey, 1.6 * s, 'rgba(50,40,28,1)');
-        for (let i = 0; i < 26; i++) {
-          const u = i / 26, px = bx + (ex - bx) * u, py = by + (ey - by) * u, nl = (7 + 6 * (1 - u)) * s;
+        for (let i = 0; i < 30; i++) {
+          const u = i / 30, px = bx + (ex - bx) * u, py = by + (ey - by) * u, nl = (7 + 6 * (1 - u)) * s;
           for (const q of [-1, 1]) { g.strokeStyle = hsl(115 + R() * 30, 22 + R() * 14, 17 + R() * 15 + (1 - Math.abs(sd * 0.5)) * 4); g.lineWidth = 1.3 * s; g.beginPath(); g.moveTo(px, py); g.lineTo(px + nl * 0.7, py + q * nl * 0.7); g.stroke(); }
         }
       }
@@ -84,8 +84,12 @@ export function makeFoliageAtlas(size) {
   });
   // 5: dense core (tileable-ish, fully covered, darker)
   inTile(5, () => {
-    g.fillStyle = hsl(100, 35, 12); g.fillRect(0, 0, size, size);
-    for (let i = 0; i < 1600; i++) leaf(R() * size, R() * size, R() * 6.28, (9 + R() * 8) * s, (4 + R() * 3) * s, hsl(85 + R() * 30, 35 + R() * 20, 14 + R() * 20), R() < 0.3);
+    const cx = 128 * s, cy = 128 * s;
+    for (let b = 0; b < 7; b++) { const a = R() * 6.28; twig(cx, cy, cx + Math.cos(a) * 100 * s, cy + Math.sin(a) * 100 * s, 2 * s); }
+    for (let i = 0; i < 1500; i++) {
+      const a = R() * Math.PI * 2, rr = Math.pow(R(), 0.45) * 122 * s, x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      leaf(x, y, R() * 6.28, (8 + R() * 6) * s, (4 + R() * 2) * s, hsl(85 + R() * 30, 26 + R() * 16, 12 + R() * 16 + (1 - rr / (122 * s)) * -4), R() < 0.25);
+    }
   });
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; tex.generateMipmaps = true;

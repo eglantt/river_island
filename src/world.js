@@ -325,21 +325,24 @@ export function buildWorld(seed, Q) {
       if (kind !== 'birch') return tmp.copy(barkCol).multiplyScalar(0.8 + 0.3 * N.n2(v.x * 5, v.y * 3));
       return N.n2(v.y * 4 + v.x * 9, v.z * 9) > 0.35 ? barkDark : barkCol;
     };
-    function leaves(c, r) {
-      const sy = kind === 'willow' ? 1.35 : kind === 'birch' ? 1.2 : 0.95;
-      const cc = kind === 'willow' ? c.clone().add(new THREE.Vector3(0, -r * 0.45, 0)) : c;
+    const clusters = [];
+    function leaves(c, r) { clusters.push([kind === 'willow' ? c.clone().add(new THREE.Vector3(0, -r * 0.35, 0)) : c.clone(), r]); }
+    function crown() {
+      if (!clusters.length) return;
+      const cc = new THREE.Vector3(); clusters.forEach(([p]) => cc.add(p)); cc.multiplyScalar(1 / clusters.length);
       const tile = kind === 'birch' ? TILE.birch : kind === 'willow' ? TILE.willow : TILE.oak;
       const sw = (y) => 0.25 + 0.75 * Math.max(0, (y - g0) / height);
-      cardAcc.coreFrom(blobGeo(N, cc, r * 0.6, sy, 1, 0.3), tint(0.55), sw(cc.y));
-      const n = Q.cards + (kind === 'willow' ? 2 : 0);
-      for (let k = 0; k < n; k++) {
-        const out = new THREE.Vector3(R() - 0.5, (R() - 0.35) * 0.9, R() - 0.5).normalize();
-        const p = cc.clone().add(new THREE.Vector3(out.x * r * 0.62, out.y * r * 0.62 * sy, out.z * r * 0.62).multiplyScalar(0.55 + R() * 0.55));
-        const size = r * (0.7 + R() * 0.35) * (kind === 'birch' ? 0.95 : 1);
-        const mode = kind === 'willow' && R() < 0.6 ? 'hang' : 'out';
-        if (mode === 'hang') p.y -= r * 0.5;
+      const total = Q.cards, inner = Math.round(total * 0.4);
+      for (let k = 0; k < total; k++) {
+        const [p0, r] = clusters[k % clusters.length], isIn = k < inner;
+        const out = p0.clone().sub(cc).add(new THREE.Vector3(R() - 0.5, (R() - 0.4) * 0.8, R() - 0.5)).normalize();
+        const p = p0.clone().addScaledVector(out, r * (isIn ? 0.1 + R() * 0.3 : 0.35 + R() * 0.45)).add(new THREE.Vector3((R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5));
+        const size = r * (isIn ? 0.6 + R() * 0.25 : 0.7 + R() * 0.35);
+        const mode = !isIn && kind === 'willow' && R() < 0.55 ? 'hang' : 'out';
+        if (mode === 'hang') p.y -= r * 0.45;
         const [ax, ay] = cardAxes(R, size, out, mode);
-        cardAcc.card(p, ax, ay, mode === 'hang' ? TILE.willow : tile, cc, tint(p.y > cc.y ? 1.05 : 0.85), sw(p.y - size), sw(p.y + size), R() < 0.5);
+        const t = isIn ? tint(0.62 + R() * 0.12) : tint(p.y > cc.y ? 1.05 : 0.88);
+        cardAcc.card(p, ax, ay, isIn ? TILE.core : mode === 'hang' ? TILE.willow : tile, cc, t, sw(p.y - size), sw(p.y + size), R() < 0.5);
       }
     }
     function branch(p, dir, len, r, depth) {
@@ -354,6 +357,7 @@ export function buildWorld(seed, Q) {
       if (depth === 1 && R() < 0.7) leaves(end, 0.9 + R() * 0.3);
     }
     branch(base, lean, height * 0.5, rBase, 2);
+    crown();
   }
   {
     const nT = 3 + Math.floor(R() * 3), kinds = ['willow', 'birch', 'oak', 'birch', 'willow'];
@@ -371,12 +375,12 @@ export function buildWorld(seed, Q) {
       const c = randIsland(0.9); if (!c) continue;
       const [x, z] = c, g0 = H(x, z), col = C(leafCols.bush[Math.floor(R() * 4)]), k = 3 + Math.floor(R() * 4), sz = 0.6 + R() * 0.6;
       const bc = new THREE.Vector3(x, g0 + sz * 0.55, z);
-      bushCards.coreFrom(blobGeo(N, bc, sz * 0.62, 0.8, 1, 0.3), tint(0.5), 0.08);
-      for (let j = 0; j < Q.bushCards + k; j++) {
-        const out = new THREE.Vector3(R() - 0.5, R() * 0.6, R() - 0.5).normalize();
-        const p = bc.clone().addScaledVector(out, sz * (0.25 + R() * 0.45)), size = sz * (0.65 + R() * 0.3);
+      const nb = Q.bushCards + k, nin = Math.round(nb * 0.4);
+      for (let j = 0; j < nb; j++) {
+        const isIn = j < nin, out = new THREE.Vector3(R() - 0.5, R() * 0.6, R() - 0.5).normalize();
+        const p = bc.clone().addScaledVector(out, sz * (isIn ? 0.05 + R() * 0.25 : 0.3 + R() * 0.4)), size = sz * (isIn ? 0.55 + R() * 0.2 : 0.6 + R() * 0.3);
         const [ax, ay] = cardAxes(R, size, out, 'out');
-        bushCards.card(p, ax, ay, TILE.bush, bc, tint(p.y > bc.y ? 1 : 0.8), Math.max(0, p.y - size - g0) * 0.25, (p.y + size - g0) * 0.25, R() < 0.5);
+        bushCards.card(p, ax, ay, isIn ? TILE.core : TILE.bush, bc, isIn ? tint(0.65) : tint(p.y > bc.y ? 1 : 0.82), Math.max(0, p.y - size - g0) * 0.25, (p.y + size - g0) * 0.25, R() < 0.5);
       }
     }
     // rocks along the shore
@@ -568,43 +572,43 @@ export function buildWorld(seed, Q) {
   {
     const trunkC = C('#4a3a2a'), V3 = THREE.Vector3;
     const conT = new Acc(), decT = new Acc();
-    conT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 10.5, 0), 0.25, 0.06, 5, 2), () => trunkC, () => 0);
+    conT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 11.6, 0), 0.24, 0.025, 5, 3), () => trunkC, () => 0);
+    for (let k = 0; k < 4; k++) { const a = k * 1.7 + 0.4, y = 0.9 + k * 0.35; conT.add(limbGeo(new V3(0, y, 0), new V3(Math.cos(a) * 0.7, y - 0.1, Math.sin(a) * 0.7), 0.035, 0.01, 3, 1), () => trunkC, () => 0); }
     decT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 4.2, 0), 0.3, 0.16, 5, 1), () => trunkC, () => 0);
     for (let k = 0; k < 3; k++) { const a = k * 2.1; decT.add(limbGeo(new V3(0, 3.6, 0), new V3(Math.cos(a) * 1.3, 5.6, Math.sin(a) * 1.3), 0.12, 0.05, 4, 1), () => trunkC, () => 0); }
-    const conifer = (levels, per) => {
-      const acc = new CardAcc();
-      acc.coreFrom(new THREE.ConeGeometry(0.75, 8.2, 6, 1).translate(0, 6.0, 0), new THREE.Color(0.62, 0.68, 0.58), 0.05);
+    const conifer = (levels, per, bare, slim, dense) => {
+      const acc = new CardAcc(), top = 11.2, y0 = bare;
       for (let l = 0; l < levels; l++) {
-        const t = l / levels, y = 1.8 + t * 8.4, len = 2.7 * (1 - t * 0.8) + 0.4;
-        for (let k = 0; k < per; k++) {
-          const a = (k + (l % 2) * 0.5) / per * Math.PI * 2 + R() * 0.4, droop = 0.35 + R() * 0.25 - t * 0.15;
+        const t = l / (levels - 1), y = y0 + t * (top - 0.7 - y0);
+        const nPer = Math.max(3, Math.round(per * (1 - t * 0.45)));
+        const baseLen = (3.0 * Math.pow(1 - t, 0.85) * slim + 0.35);
+        for (let k = 0; k < nPer; k++) {
+          const a = (k + R() * 0.6) / nPer * Math.PI * 2 + l * 0.9, len = baseLen * (0.75 + R() * 0.45);
+          const droop = (0.45 - t * 0.75) * (0.8 + R() * 0.4);
           const dir = new V3(Math.cos(a), -droop, Math.sin(a)).normalize(), base = new V3(0, y, 0);
-          const c = base.clone().addScaledVector(dir, len / 2 + 0.1), side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
-          const ax = dir.clone().multiplyScalar(len / 2 + 0.1);
-          // two crossed planes per bough so it reads from the side as well as from below
-          const roll = (R() - 0.5) * 0.5;
-          const ay1 = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(len * 0.42);
-          const ay2 = up.clone().multiplyScalar(Math.cos(roll)).addScaledVector(side, -Math.sin(roll)).multiplyScalar(len * 0.3);
-          const tn = tint(0.85 + t * 0.3);
-          acc.card(c, ax, ay1, TILE.spruce, base, tn, y * 0.012, (y + 0.4) * 0.016);
-          acc.card(c, ax, ay2, TILE.spruce, base, tn.clone().multiplyScalar(0.92), y * 0.012, (y + 0.4) * 0.016);
+          const c = base.clone().addScaledVector(dir, len / 2 + 0.08), side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
+          const roll = (R() < 0.5 ? -1 : 1) * (0.7 + R() * 0.45);
+          const ay = side.multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(len * 0.4 * dense);
+          acc.card(c, dir.clone().multiplyScalar(len / 2 + 0.08), ay, TILE.spruce, base, tint((0.8 + t * 0.35) * (0.9 + R() * 0.2)), y * 0.012, (y + 0.4) * 0.016);
         }
       }
-      for (let k = 0; k < 2; k++) { const a = k * Math.PI / 2; acc.card(new V3(0, 10.6, 0), new V3(Math.cos(a) * 0.4, 0, Math.sin(a) * 0.4), new V3(0, 0.75, 0), TILE.spruce, new V3(0, 10.0, 0), tint(1.05), 0.12, 0.18); }
       return acc.build();
     };
-    const broad = (n) => {
-      const acc = new CardAcc(), cc = new V3(0, 5.6, 0);
-      acc.coreFrom(blobGeo(N, cc, 2.0, 0.85, 1, 0.3), new THREE.Color(0.42, 0.45, 0.38), 0.12);
+    const broad = (n, ry, spread) => {
+      const acc = new CardAcc(), cc = new V3(0, 5.4 * ry, 0), nin = Math.round(n * 0.4);
       for (let k = 0; k < n; k++) {
-        const out = new V3(R() - 0.5, (R() - 0.3) * 0.8, R() - 0.5).normalize();
-        const p = cc.clone().addScaledVector(out, 1.4 + R() * 0.9), size = 1.5 + R() * 0.6;
+        const isIn = k < nin, out = new V3(R() - 0.5, (R() - 0.3) * 0.8, R() - 0.5).normalize();
+        const p = cc.clone().add(new V3(out.x * spread, out.y * ry, out.z * spread).multiplyScalar(isIn ? 0.4 + R() * 0.7 : 1.3 + R() * 1.0));
+        const size = isIn ? 1.3 + R() * 0.4 : 1.4 + R() * 0.6;
         const [ax, ay] = cardAxes(R, size, out, 'out');
-        acc.card(p, ax, ay, TILE.oak, cc, tint(p.y > cc.y ? 1.05 : 0.8), (p.y - size) * 0.03, (p.y + size) * 0.03, R() < 0.5);
+        acc.card(p, ax, ay, isIn ? TILE.core : TILE.oak, cc, isIn ? tint(0.62) : tint(p.y > cc.y ? 1.05 : 0.82), (p.y - size) * 0.03, (p.y + size) * 0.03, R() < 0.5);
       }
       return acc.build();
     };
-    const conNear = conifer(Q.spruceLv, Q.sprucePer), conFar = conifer(4, 4), decNear = broad(Q.forestCards), decFar = broad(5);
+    const conV = [[Q.spruceLv, Q.sprucePer, 1.4, 1.0, 1.0], [Q.spruceLv + 2, Q.sprucePer, 2.2, 0.85, 0.9], [Q.spruceLv - 2, Q.sprucePer + 1, 0.9, 1.15, 1.1], [Q.spruceLv, Q.sprucePer - 1, 2.8, 0.75, 0.85]]
+      .slice(0, Q.variants).map((v) => conifer(...v));
+    const decV = [[Q.forestCards, 1.0, 1.0], [Q.forestCards, 1.15, 0.85], [Q.forestCards, 0.9, 1.2]].slice(0, Math.max(2, Q.variants - 1)).map((v) => broad(...v));
+    const conFar = conifer(10, 6, 1.6, 1.05, 1.25), decFar = broad(Math.round(Q.forestCards * 0.4), 1.0, 1.0);
     const fmat = FM.mk('forestfol', 0.25);
     const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'forest', 0.25);
     const ftint = new THREE.Color();
@@ -634,8 +638,8 @@ export function buildWorld(seed, Q) {
       return [tm, fm];
     };
     const ctB = conT.build(), dtB = decT.build();
-    meshes.con = pair(ctB, conNear, Math.round(Q.forest * 0.55), true, false);
-    meshes.dec = pair(dtB, decNear, Math.round(Q.forest * 0.45), false, false);
+    meshes.con = conV.map((g) => pair(ctB, g, Math.round(Q.forest * 0.55 / conV.length), true, false));
+    meshes.dec = decV.map((g) => pair(dtB, g, Math.round(Q.forest * 0.45 / decV.length), false, false));
     meshes.conF = pair(ctB, conFar, Math.round(Q.far * 0.55), true, true);
     meshes.decF = pair(dtB, decFar, Math.round(Q.far * 0.45), false, true);
   }
