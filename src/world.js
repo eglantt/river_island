@@ -337,7 +337,7 @@ export function buildWorld(seed, Q) {
         const [p0, r] = clusters[k % clusters.length], isIn = k < inner;
         const out = p0.clone().sub(cc).add(new THREE.Vector3(R() - 0.5, (R() - 0.4) * 0.8, R() - 0.5)).normalize();
         const p = p0.clone().addScaledVector(out, r * (isIn ? 0.1 + R() * 0.3 : 0.35 + R() * 0.45)).add(new THREE.Vector3((R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5));
-        const size = r * (isIn ? 0.6 + R() * 0.25 : 0.7 + R() * 0.35);
+        const size = r * (isIn ? 0.55 + R() * 0.22 : 0.6 + R() * 0.3);
         const mode = !isIn && kind === 'willow' && R() < 0.55 ? 'hang' : 'out';
         if (mode === 'hang') p.y -= r * 0.45;
         const [ax, ay] = cardAxes(R, size, out, mode);
