@@ -12,7 +12,7 @@ export const U = {
   uAmb: { value: new THREE.Color() }, uWet: { value: 0 }, uRain: { value: 0 }, uFlash: { value: 0 },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
-  uFF: { value: 0 }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
+  uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
   uRiver: { value: new THREE.Vector4(0, 0, 0, 40) }, // meander a1,f1(phase),.., halfwidth
 };
 
@@ -47,6 +47,16 @@ const PROJ = /* glsl */`
 vec4 mvPosition = vec4(transformed, 1.0);
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
+  #ifdef HIDECAMP
+  if (uCampOn > 0.5) {
+    vec2 o = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xz;
+    vec2 d = o - uCampA.xy;
+    vec2 l = vec2(d.x * uCampB.x - d.y * uCampB.y, d.x * uCampB.y + d.y * uCampB.x); // tent-local (x across, y along)
+    bool inTent = abs(l.x) < uCampB.z + 0.12 && abs(l.y) < uCampB.w + 0.35;
+    bool inPit = length(o - uCampA.zw) < 0.78;
+    if (inTent || inPit) mvPosition.y -= 5.0;
+  }
+  #endif
 #endif
 vec4 wpp = modelMatrix * mvPosition;
 float gst = texture2D(tNoise, wpp.xz*0.013 - uWindDir*uTime*0.075).b;
@@ -62,10 +72,10 @@ gl_Position = projectionMatrix * mvPosition;
 export function patch(mat, key, amp = 0, defs = {}) {
   mat.defines = Object.assign({}, mat.defines || {}, defs);
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
+    for (const k of ['uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
+    sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
     sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
@@ -228,7 +238,7 @@ export function waterMaterial() {
       #include <fog_pars_fragment>
       uniform sampler2D tNoise, tWaterN, tDepth, tHzn; uniform vec2 uCloudOff, uWindDir; uniform float uCover, uDark, uSunVis, uTime, uRain, uWind, uMoonVis, uFlash, uNight, uSunOcc, uMoonOcc;
       uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog; uniform float uFogSky;
-      uniform vec4 uRip[4]; uniform vec4 uDepthBox, uRiver;
+      uniform vec4 uRip[4]; uniform vec4 uDepthBox, uRiver, uBolt;
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -280,6 +290,11 @@ export function waterMaterial() {
           refl = mix(refl, mcol, mtn * (1.0 - uFogSky * 0.6));
         }
         refl = mix(refl, uSkyFog, uFogSky*0.75);
+        if (uBolt.w > 0.01 && uBolt.z > 0.5) {
+          vec2 bd = normalize(uBolt.xy - uCam.xz), rd = normalize(R.xz);
+          float da = 1.0 - dot(bd, rd);
+          refl += vec3(0.85, 0.9, 1.0) * exp(-da * 9000.0) * smoothstep(0.0, 0.02, R.y) * uBolt.w * 2.5;
+        }
         // reflected forest wall along banks
         float side = sign(R.z + 1e-4);
         float mz = mzf(vWp.x);

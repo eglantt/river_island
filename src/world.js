@@ -449,7 +449,7 @@ export function buildWorld(seed, Q) {
   // grass
   {
     const g = bladeGeo(0.04, 4, C('#c3c865'), C('#3d6a26'), 0.1);
-    const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'grass', 0.55, { GUST: '', NOFLIP: '' });
+    const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'grass', 0.55, { GUST: '', NOFLIP: '', HIDECAMP: '' });
     const tint = new THREE.Color();
     meshes.grass = instanced(g, mat, Q.grass, (d) => {
       for (let t = 0; t < 12; t++) {
@@ -484,7 +484,7 @@ export function buildWorld(seed, Q) {
     const pal = ['#ffffff', '#ffd21f', '#ffe36b', '#a77bff', '#ff7fb0', '#6f8dff'].map((h) => C(h).multiplyScalar(1.25));
     const clusters = [];
     for (let i = 0; i < 22; i++) { const c = randIsland(0.85); if (c) clusters.push([c[0], c[1], pal[Math.floor(R() * pal.length)], 0.8 + R() * 1.8]); }
-    meshes.flowers = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'flower', 0.55, { NOFLIP: '' }), Q.flowers, (d) => {
+    meshes.flowers = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'flower', 0.55, { NOFLIP: '', HIDECAMP: '' }), Q.flowers, (d) => {
       if (!clusters.length) return null;
       for (let t = 0; t < 8; t++) {
         const cl = clusters[Math.floor(R() * clusters.length)], rr = cl[3] * Math.sqrt(-2 * Math.log(R() + 1e-6)) * 0.6, an = R() * 6.28;
@@ -510,7 +510,7 @@ export function buildWorld(seed, Q) {
       if (h < 0.2 && h > -0.35) reedClusters.push([x, z, 1.5 + R() * 3.5]);
     }
     const g = bladeGeo(0.08, 5, C('#a2a85a'), C('#3e5a2a'), 0.25);
-    meshes.reeds = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'reed', 0.35, { GUST: '', NOFLIP: '' }), Q.reeds, (d) => {
+    meshes.reeds = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'reed', 0.35, { GUST: '', NOFLIP: '', HIDECAMP: '' }), Q.reeds, (d) => {
       for (let t = 0; t < 30; t++) {
         let x, z;
         if (reedClusters.length && R() < 0.7) {

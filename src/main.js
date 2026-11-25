@@ -10,8 +10,9 @@ import { createFauna } from './fauna.js';
 import { createAudio, testThunder } from './audio.js';
 import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
+import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.7';
+const VERSION = '0.0.8';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -54,8 +55,7 @@ const camera = new THREE.PerspectiveCamera(70, 1, 0.08, 9000);
 const sun = new THREE.DirectionalLight(0xffffff, 2); scene.add(sun, sun.target);
 const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x334422, 1); scene.add(hemi);
 // lightning bolt
-const boltGeo = new THREE.BufferGeometry(); boltGeo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(3 * 24), 3));
-const bolt = new THREE.Line(boltGeo, new THREE.LineBasicMaterial({ color: 0xeef2ff, fog: false, transparent: true })); bolt.visible = false; bolt.frustumCulled = false; scene.add(bolt);
+const bolts = createLightning(scene, U);
 
 const nt = new THREE.DataTexture(noiseTextureData(256), 256, 256, THREE.RGBAFormat);
 nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.magFilter = nt.minFilter = THREE.LinearFilter; nt.needsUpdate = true; U.tNoise.value = nt;
@@ -96,6 +96,7 @@ function build() {
   world = buildWorld(S.seed, Q); scene.add(world.group);
   fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene);
   camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
+  U.uCampA.value.set(camp.tentP.x, camp.tentP.z, camp.fireP.x, camp.fireP.z); U.uCampB.value.set(Math.cos(camp.yaw), Math.sin(camp.yaw), camp.halfW, camp.halfL);
   P.pos.set(world.spawn[0], world.H(world.spawn[0], world.spawn[1]) + P.eye, world.spawn[1]); P.pitch = 0.02; P.gy = P.pos.y; P.jy = 0; P.vy = 0;
   // face roughly west along the river, avoiding a trunk right in front
   let best = Math.PI / 2, bestScore = -1;
@@ -161,7 +162,7 @@ pad.addEventListener('pointerup', up); pad.addEventListener('pointercancel', up)
 const W = { cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 };
 Object.assign(W, WEATHER[S.weather]);
 let weatherRate = 1 / 30, nextAuto = 3 + Math.random() * 3, autoClock = 0;
-let flash = 0, nextStrike = 5, strikeSeq = [];
+let dbgA = null, dbgK = null, flash = 0, nextStrike = 5, strikeSeq = [], strikeKind = 'ground';
 let windS = S.wind, gameTime = 0;
 const keysPal = [
   [-18, '#03050c', '#0a1020', '#000000'], [-9, '#0a1230', '#1d2650', '#24183a'], [-3, '#1c2c5a', '#b4685c', '#ff6a3a'],
@@ -253,21 +254,24 @@ function lightning(dt) {
   if (W.storm > 0.6) {
     nextStrike -= dt;
     if (nextStrike <= 0) {
-      nextStrike = 4 + Math.random() * 10;
-      const a = Math.random() * 6.28, dist = 600 + Math.random() * 1600, x = P.pos.x + Math.cos(a) * dist, z = P.pos.z + Math.sin(a) * dist;
-      const arr = boltGeo.attributes.position.array; let px = x, pz = z;
-      for (let i = 0; i < 24; i++) { const y = 700 - i * 30; px += (Math.random() - 0.5) * 50; pz += (Math.random() - 0.5) * 50; arr[i * 3] = px; arr[i * 3 + 1] = y; arr[i * 3 + 2] = pz; }
-      boltGeo.attributes.position.needsUpdate = true;
-      strikeSeq = [0, 0.08, 0.18, 0.26].map((d, i) => [d, i % 2 ? 0.25 : 1]);
-      flash = 0.001; audio.thunder(dist / 340 * 0.9, 1 - dist / 2400);
+      nextStrike = Math.random() < 0.25 ? 1 + Math.random() * 1.5 : 6 + Math.random() * 9;
+      const r = Math.random(), kind = dbgK || (r < 0.3 ? 'cloud' : r < 0.45 ? 'near' : 'ground');
+      const s = bolts.strike(camera.position, kind, Math.random, dbgA); dbgA = dbgK = null;
+      U.uBolt.value.set(s.pos.x, s.pos.z, kind === 'cloud' ? 0 : 1, 0);
+      const n = 2 + Math.floor(Math.random() * 3); strikeSeq = [];
+      for (let i = 0, t = 0; i < n; i++) { strikeSeq.push([t, i === 0 ? 1 : 0.55 + Math.random() * 0.4]); t += 0.06 + Math.random() * 0.1; }
+      flash = 0.001; strikeKind = kind;
+      audio.thunder(s.dist / 340, kind === 'cloud' ? 0.25 : Math.max(0, 1 - s.dist / 2600));
     }
   }
   if (flash > 0) {
     flash += dt; let f = 0;
     for (const [d, v] of strikeSeq) if (flash > d && flash < d + 0.07) f = Math.max(f, v);
     f = Math.max(f, Math.exp(-(flash - 0.3) * 8) * 0.3 * (flash > 0.3 ? 1 : 0));
-    U.uFlash.value = f; bolt.visible = flash < 0.32 && f > 0.2; bolt.material.opacity = f;
-    if (flash > 1.2) { flash = 0; U.uFlash.value = 0; bolt.visible = false; }
+    const lastS = strikeSeq[strikeSeq.length - 1][0] + 0.07;
+    const glowB = flash < lastS ? f : Math.max(0, 0.35 * (1 - (flash - lastS) / 0.35));
+    U.uFlash.value = f * (strikeKind === 'cloud' ? 0.7 : 1); bolts.set(glowB); U.uBolt.value.w = glowB;
+    if (flash > 1.2) { flash = 0; U.uFlash.value = 0; bolts.set(0); U.uBolt.value.w = 0; }
   }
 }
 
@@ -422,6 +426,7 @@ function frame(now) {
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
   ducks.update(dt, gameTime, env);
   camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
+  U.uCampOn.value = S.camp ? 1 : 0;
   if (audio.on) {
     const nd = fauna.nearest(camera.position); let pan = 0;
     if (nd.p) { const v = nd.p.clone().sub(camera.position); right.set(Math.cos(P.yaw), 0, -Math.sin(P.yaw)); pan = clamp(v.dot(right) / (nd.d + 0.01), -1, 1); }
@@ -455,6 +460,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { testThunder, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { testThunder, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

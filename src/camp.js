@@ -22,16 +22,19 @@ export function createCamp(world, Q, scene, coarse) {
     if (!best || score > best.s) best = { x, z, s: score };
   }
   if (!best) best = { x: world.spawn[0] - 4, z: world.spawn[1] };
-  // fire ~2.6 m from the tent, towards the more open side
+  // tent door faces direction fa; the fire is ~4 m in front of it and ~1.2 m off the tent axis
+  const FD = 4.0, FO = 1.2 * (R() < 0.5 ? -1 : 1);
+  const firePos = (a) => [best.x + Math.cos(a) * FD - Math.sin(a) * FO, best.z + Math.sin(a) * FD + Math.cos(a) * FO];
   let fa = 0, fs = -1e9;
   for (let k = 0; k < 16; k++) {
-    const a = k / 16 * Math.PI * 2, fx = best.x + Math.cos(a) * 2.7, fz = best.z + Math.sin(a) * 2.7;
+    const a = k / 16 * Math.PI * 2, [fx, fz] = firePos(a);
     if (islandE(fx, fz) > 0.8) continue;
     const s = Math.min(...trunks.map(([tx, tz, r]) => Math.hypot(tx - fx, tz - fz) - r)) - Math.abs(H(fx, fz) - H(best.x, best.z)) * 3;
     if (s > fs) { fs = s; fa = a; }
   }
   const tentP = new THREE.Vector3(best.x, H(best.x, best.z), best.z);
-  const fireP = new THREE.Vector3(best.x + Math.cos(fa) * 2.7, 0, best.z + Math.sin(fa) * 2.7); fireP.y = H(fireP.x, fireP.z);
+  const fp = firePos(fa), fireP = new THREE.Vector3(fp[0], 0, fp[1]); fireP.y = H(fireP.x, fireP.z);
+  const yaw = Math.atan2(Math.cos(fa), Math.sin(fa)); // tent local +z (door) -> direction fa
   const group = new THREE.Group(); group.visible = false; scene.add(group);
 
   // ---- tent ----
@@ -60,7 +63,7 @@ export function createCamp(world, Q, scene, coarse) {
     acc.add(back, colFn, () => 0.1);
     // front door flaps, slightly open
     for (const side of [-1, 1]) {
-      const top = new THREE.Vector3(0, ridgeY(L / 2), L / 2), foot = new THREE.Vector3(side * W, 0.04, L / 2), inner = new THREE.Vector3(side * 0.28, 0.04, L / 2 + 0.32);
+      const top = new THREE.Vector3(0, ridgeY(L / 2), L / 2), foot = new THREE.Vector3(side * W, 0.04, L / 2), inner = new THREE.Vector3(side * 0.62, 0.04, L / 2 + 0.5);
       const fl = new THREE.BufferGeometry(); fl.setAttribute('position', new THREE.Float32BufferAttribute([...top.toArray(), ...foot.toArray(), ...inner.toArray()], 3)); fl.computeVertexNormals();
       acc.add(fl, colFn, (v) => v.y < 0.2 ? 0.6 : 0.2);
     }
@@ -79,10 +82,30 @@ export function createCamp(world, Q, scene, coarse) {
     const poles = new THREE.Mesh(poleAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'pole', 0));
     const ropeG = new THREE.BufferGeometry(); ropeG.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
     const ropes = new THREE.LineSegments(ropeG, new THREE.LineBasicMaterial({ color: '#b7aa88' }));
-    const tg = new THREE.Group(); tg.add(tent, poles, ropes);
+    // inside: canvas floor, rolled sleeping bag at the back wall, backpack at a side wall
+    const inAcc = new Acc(), cFloor = C('#3f4231'), cBag = C('#4f6377'), cBag2 = C('#3c4c5c'), cStrap = C('#2a2a26'), cPack = C('#8a5f38'), cPack2 = C('#6e4a2c');
+    {
+      const fl = new THREE.PlaneGeometry(W * 1.86, L * 0.98, 10, 10); fl.rotateX(-Math.PI / 2);
+      const P = fl.attributes.position;
+      for (let i = 0; i < P.count; i++) { const x = P.getX(i), z = P.getZ(i), edge = Math.max(Math.abs(x) / (W * 0.93), Math.abs(z) / (L * 0.49)); P.setY(i, 0.05 + 0.02 * N.n2(x * 4, z * 4) + (edge > 0.92 ? 0.06 : 0)); }
+      fl.computeVertexNormals();
+      inAcc.add(fl, (v) => tmp.copy(cFloor).multiplyScalar(0.85 + 0.2 * N.n2(v.x * 6, v.z * 6)), () => 0);
+      const bag = new THREE.CylinderGeometry(0.15, 0.15, 0.78, 14, 1); bag.rotateZ(Math.PI / 2); bag.translate(0, 0.2, -L / 2 + 0.3);
+      inAcc.add(bag, (v) => (Math.abs(Math.abs(v.x) - 0.22) < 0.03 ? cStrap : (N.n2(v.x * 9, v.y * 9) > 0 ? cBag : cBag2)), () => 0);
+      for (const sx of [-1, 1]) { const end = new THREE.CircleGeometry(0.15, 14); end.rotateY(sx * Math.PI / 2); end.translate(sx * 0.39, 0.2, -L / 2 + 0.3); inAcc.add(end, (v) => tmp.copy(cBag2).lerp(cBag, Math.hypot(v.y - 0.2, v.z + L / 2 - 0.3) * 5), () => 0); }
+      const px = 0.45 * (R() < 0.5 ? -1 : 1), pz = 0.15;
+      const body = new THREE.BoxGeometry(0.2, 0.46, 0.32, 2, 3, 2); body.translate(0, 0.28, 0);
+      const BP = body.attributes.position; for (let i = 0; i < BP.count; i++) { BP.setX(i, BP.getX(i) * (1 - 0.15 * (BP.getY(i) - 0.05))); BP.setZ(i, BP.getZ(i) * (0.95 + 0.1 * Math.sin(BP.getY(i) * 6))); }
+      body.computeVertexNormals();
+      const flap = new THREE.BoxGeometry(0.22, 0.05, 0.34); flap.translate(0, 0.52, 0.01);
+      const pocket = new THREE.BoxGeometry(0.07, 0.18, 0.22); pocket.translate(-Math.sign(px) * 0.12, 0.22, 0);
+      for (const g of [body, flap, pocket]) { g.rotateZ(-Math.sign(px) * 0.25); g.translate(px, 0, pz); inAcc.add(g, (v) => (g === body ? cPack : cPack2), () => 0); }
+    }
+    const inside = new THREE.Mesh(inAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'tentin', 0)); inside.receiveShadow = true;
+    const tg = new THREE.Group(); tg.add(tent, poles, ropes, inside);
     tg.position.copy(tentP); tg.position.y -= 0.02;
     // door faces the fire: local +z -> direction to fire
-    tg.rotation.y = Math.atan2(fireP.x - tentP.x, fireP.z - tentP.z);
+    tg.rotation.y = yaw;
     group.add(tg);
   }
 
@@ -246,8 +269,12 @@ export function createCamp(world, Q, scene, coarse) {
   function setVisible(v) { group.visible = v; }
   function dispose() { group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); }); scene.remove(group); }
   return {
-    update, setVisible, dispose, fireP, tentP,
+    update, setVisible, dispose, fireP, tentP, yaw, halfW: 1.15, halfL: 1.15,
     get state() { return { fire, smoke: smokeAmt, out }; },
-    blocks: (x, z) => group.visible && (Math.hypot(x - tentP.x, z - tentP.z) < 1.55 || Math.hypot(x - fireP.x, z - fireP.z) < 0.6),
+    blocks: (x, z) => {
+      if (!group.visible) return false;
+      const dx = x - tentP.x, dz = z - tentP.z, lx = dx * Math.cos(yaw) - dz * Math.sin(yaw), lz = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+      return (Math.abs(lx) < 1.4 && Math.abs(lz) < 1.45) || Math.hypot(x - fireP.x, z - fireP.z) < 0.65;
+    },
   };
 }
