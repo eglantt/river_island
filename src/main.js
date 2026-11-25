@@ -7,9 +7,11 @@ import { U } from './shaders.js';
 import { noiseTextureData, waterNormalData } from './noise.js';
 import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
-import { createAudio } from './audio.js';
+import { createAudio, testThunder } from './audio.js';
+import { createCamp } from './camp.js';
+import { createDucks } from './ducks.js';
 
-const VERSION = '0.0.6';
+const VERSION = '0.0.7';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -18,9 +20,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, dust: 60, bf: 8, df: 4 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, dust: 120, bf: 14, df: 6 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, dust: 200, bf: 22, df: 8 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 50, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 70, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 90, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -30,10 +32,12 @@ const WEATHER = {
   rain: { name: 'Дождь', cover: 0.93, dark: 0.55, rain: 0.75, near: 30, far: 1100, wind: 0.3, mist: 0.3, storm: 0 },
   storm: { name: 'Гроза', cover: 1, dark: 0.75, rain: 1, near: 20, far: 750, wind: 0.6, mist: 0.2, storm: 1 },
 };
+// phones: 'Среднее' without live shadows
+const tier = (k) => Object.assign({}, TIERS[k], coarse && k === 'med' ? { shadows: 0 } : {});
 const NEXT = { clear: ['partly', 'partly', 'clear'], partly: ['clear', 'overcast', 'partly'], overcast: ['partly', 'rain', 'fog'], fog: ['clear', 'partly'], rain: ['overcast', 'storm', 'partly'], storm: ['rain'] };
 
 // ---------- settings ----------
-const DEF = { cycle: 25, paused: false, hour: 17, day: 0, weather: 'clear', auto: true, quality: 'auto', wind: 0.35, volume: 0.7, mode: 'walk', clock: true, fps: false, seed: 20261124 };
+const DEF = { cycle: 25, paused: false, hour: 17, day: 0, weather: 'clear', auto: true, quality: 'auto', wind: 0.35, volume: 0.7, mode: 'walk', clock: true, fps: false, seed: 20261124, camp: false };
 let S = Object.assign({}, DEF);
 try { Object.assign(S, JSON.parse(localStorage.getItem('island-settings') || '{}')); } catch (e) { /* storage unavailable */ }
 const save = () => { try { localStorage.setItem('island-settings', JSON.stringify(S)); } catch (e) { /* ignore */ } };
@@ -58,8 +62,8 @@ nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.magFilter = nt.minFilter = THREE.
 const wn = new THREE.DataTexture(waterNormalData(256), 256, 256, THREE.RGBAFormat);
 wn.wrapS = wn.wrapT = THREE.RepeatWrapping; wn.magFilter = THREE.LinearFilter; wn.minFilter = THREE.LinearMipmapLinearFilter; wn.generateMipmaps = true; wn.needsUpdate = true; U.tWaterN.value = wn;
 
-let tierKey = S.quality === 'auto' ? (coarse ? 'low' : 'high') : S.quality, Q = TIERS[tierKey];
-let world = null, fauna = null, composer = null, bloom = null;
+let tierKey = S.quality === 'auto' ? (coarse ? 'med' : 'high') : S.quality, Q = tier(tierKey);
+let world = null, fauna = null, ducks = null, camp = null, composer = null, bloom = null;
 const audio = createAudio();
 
 function applyRenderQuality() {
@@ -85,13 +89,14 @@ function applyRenderQuality() {
 }
 
 // ---------- player ----------
-const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0 };
+const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0 };
 let curve = null, flyU = 0;
 function build() {
-  if (world) { scene.remove(world.group); disposeGroup(world.group); fauna.dispose(); }
+  if (world) { scene.remove(world.group); disposeGroup(world.group); fauna.dispose(); ducks.dispose(); camp.dispose(); }
   world = buildWorld(S.seed, Q); scene.add(world.group);
-  fauna = createFauna(world, Q, scene);
-  P.pos.set(world.spawn[0], world.H(world.spawn[0], world.spawn[1]) + P.eye, world.spawn[1]); P.pitch = 0.02;
+  fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene);
+  camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
+  P.pos.set(world.spawn[0], world.H(world.spawn[0], world.spawn[1]) + P.eye, world.spawn[1]); P.pitch = 0.02; P.gy = P.pos.y; P.jy = 0; P.vy = 0;
   // face roughly west along the river, avoiding a trunk right in front
   let best = Math.PI / 2, bestScore = -1;
   for (let k = -8; k <= 8; k++) {
@@ -113,17 +118,22 @@ function build() {
   applyRenderQuality();
 }
 
-const walkable = (x, z) => world.H(x, z) > 0.08 && world.islandE(x, z) < 1.25 && !world.trunks.some(([tx, tz, r]) => (tx - x) ** 2 + (tz - z) ** 2 < r * r);
+const walkable = (x, z) => world.H(x, z) > 0.08 && world.islandE(x, z) < 1.25 && !world.trunks.some(([tx, tz, r]) => (tx - x) ** 2 + (tz - z) ** 2 < r * r) && !camp.blocks(x, z);
 
 // ---------- input ----------
-const keys = {}; let joy = null, look = null; const jv = { x: 0, y: 0 }; let lookDX = 0, lookDY = 0;
-addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT') return; keys[e.code] = true; });
+const keys = {}; let joy = null, look = null, rjoy = null; const jv = { x: 0, y: 0 }, rv = { x: 0, y: 0 }; let lookDX = 0, lookDY = 0, jumpReq = false;
+const rstickEl = $('rstick'), rknob = $('rknob'), jumpEl = $('jump');
+const rCenter = () => { const b = rstickEl.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2, b.width / 2]; };
+const onJumpBtn = (x, y) => { const b = jumpEl.getBoundingClientRect(); return Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)) < b.width * 0.7; };
+addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT') return; keys[e.code] = true; if (e.code === 'Space' && started) { jumpReq = true; e.preventDefault(); } if (e.code === 'Escape' && photo) setPhoto(false); });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 const pad = $('pad'), stick = $('stick'), knob = $('knob');
 pad.addEventListener('pointerdown', (e) => {
   if (!started) return; closePanel();
   try { pad.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  if (e.pointerType !== 'mouse' && touchUI() && onJumpBtn(e.clientX, e.clientY)) { jumpReq = true; jumpEl.classList.add('down'); setTimeout(() => jumpEl.classList.remove('down'), 150); return; }
+  if (e.pointerType !== 'mouse' && touchUI() && !rjoy) { const [cx, cy, r] = rCenter(); if (Math.hypot(e.clientX - cx, e.clientY - cy) < r * 1.35) { rjoy = { id: e.pointerId, x: cx, y: cy, r }; return; } }
   if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && !joy && S.mode === 'walk') {
     joy = { id: e.pointerId, x: e.clientX, y: e.clientY }; stick.style.display = 'block'; stick.style.left = e.clientX - 60 + 'px'; stick.style.top = e.clientY - 60 + 'px';
   } else if (!look) look = { id: e.pointerId, x: e.clientX, y: e.clientY };
@@ -134,11 +144,17 @@ pad.addEventListener('pointermove', (e) => {
     jv.x = dx / r; jv.y = dy / r; knob.style.transform = `translate(${dx}px,${dy}px)`;
   }
   if (look && e.pointerId === look.id) { lookDX += e.clientX - look.x; lookDY += e.clientY - look.y; look.x = e.clientX; look.y = e.clientY; }
+  if (rjoy && e.pointerId === rjoy.id) {
+    let dx = e.clientX - rjoy.x, dy = e.clientY - rjoy.y; const l = Math.hypot(dx, dy), r = rjoy.r * 0.75; if (l > r) { dx *= r / l; dy *= r / l; }
+    rv.x = dx / r; rv.y = dy / r; rknob.style.transform = `translate(${dx}px,${dy}px)`;
+  }
 });
 const up = (e) => {
   if (joy && e.pointerId === joy.id) { joy = null; jv.x = jv.y = 0; stick.style.display = 'none'; knob.style.transform = ''; }
   if (look && e.pointerId === look.id) look = null;
+  if (rjoy && e.pointerId === rjoy.id) { rjoy = null; rv.x = rv.y = 0; rknob.style.transform = ''; }
 };
+const touchUI = () => coarse && started && S.mode === 'walk' && !photo;
 pad.addEventListener('pointerup', up); pad.addEventListener('pointercancel', up);
 
 // ---------- environment state ----------
@@ -224,6 +240,10 @@ function updateEnv(dt) {
   world.meshes.rain.geometry.setDrawRange(0, Math.floor(Q.rain * 2 * clamp(W.rain, 0, 1)));
   world.meshes.mist.visible = U.uMist.value > 0.02;
   world.meshes.ff.visible = U.uFF.value > 0.01; world.meshes.dust.visible = U.uDust.value > 0.02;
+  // rainbow: after rain, sun low behind the viewer
+  const rbT = (U.uWet.value > 0.25 && W.rain < 0.08 && W.cover < 0.8 && el > 2 && el < 40 && sOcc > 0.5) ? Math.min(1, (U.uWet.value - 0.25) * 2) : 0;
+  U.uRainbow.value += (rbT - U.uRainbow.value) * Math.min(1, dt * 0.3);
+  U.uOpen.value += (sm(4, 14, el) - U.uOpen.value) * Math.min(1, dt * 0.05);
   env = { el, night, day, sunInt, dry, h,
     bfly: sm(7, 18, el) * dry * (1 - dk * 0.7), dfly: sm(1, 10, el) * dry, birds: sm(-3, 5, el) * (1 - sm(0.4, 0.8, W.rain)),
     bats: sm(-5, -10, el) * dry, fish: 1 - W.storm * 0.9 };
@@ -259,6 +279,13 @@ const fenv = {
 
 // ---------- movement ----------
 const fwd = new THREE.Vector3(), right = new THREE.Vector3();
+function surface() {
+  const x = P.pos.x, z = P.pos.z, h = world.H(x, z);
+  if (h < 0.18) return 'water';
+  if (world.trunks.some(([tx, tz, r]) => Math.hypot(tx - x, tz - z) < r + 0.5 && r > 0.5) || (camp.blocks(x, z))) return 'stone';
+  if (h < 0.42) return 'sand';
+  return 'grass';
+}
 function updatePlayer(dt) {
   if (S.mode === 'fly') {
     flyU = (flyU + dt / 75) % 1;
@@ -270,6 +297,7 @@ function updatePlayer(dt) {
   }
   P.yaw -= lookDX * (coarse ? 0.0055 : 0.0035); P.pitch = clamp(P.pitch - lookDY * (coarse ? 0.0045 : 0.003), -1.35, 1.35); lookDX = lookDY = 0;
   if (keys.ArrowLeft) P.yaw += dt * 1.8; if (keys.ArrowRight) P.yaw -= dt * 1.8;
+  P.yaw -= rv.x * Math.abs(rv.x) * dt * 2.4; P.pitch = clamp(P.pitch - rv.y * Math.abs(rv.y) * dt * 1.6, -1.35, 1.35);
   let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - jv.y;
   let s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + jv.x;
   const l = Math.hypot(f, s); if (l > 1) { f /= l; s /= l; }
@@ -279,10 +307,20 @@ function updatePlayer(dt) {
   if (l > 0.05) {
     if (walkable(P.pos.x + dx, P.pos.z + dz)) { P.pos.x += dx; P.pos.z += dz; }
     else if (walkable(P.pos.x + dx, P.pos.z)) P.pos.x += dx; else if (walkable(P.pos.x, P.pos.z + dz)) P.pos.z += dz;
-    P.bob += dt * Math.min(1, l) * speed * 3.2;
+    if (P.jy <= 0) P.bob += dt * Math.min(1, l) * speed * 3.2;
   }
+  // jump
+  if (jumpReq) { jumpReq = false; if (P.jy <= 0 && P.vy === 0) P.vy = 3.2; }
+  if (P.vy !== 0 || P.jy > 0) {
+    P.vy -= 9.8 * dt; P.jy += P.vy * dt;
+    if (P.jy <= 0) { P.jy = 0; P.vy = 0; P.squat = 0.09; audio.step(surface(), 1.6); }
+  }
+  P.squat = Math.max(0, P.squat - dt * 0.45);
+  // footsteps on each down-beat of the walk bob
+  const beat = Math.floor(P.bob / Math.PI); if (beat !== P.lastStep) { P.lastStep = beat; if (P.jy <= 0) audio.step(surface(), keys.ShiftLeft || keys.ShiftRight ? 1.2 : 0.9); }
   const gy = world.H(P.pos.x, P.pos.z) + P.eye + Math.sin(P.bob) * 0.035;
-  P.pos.y += (gy - P.pos.y) * Math.min(1, dt * 10);
+  P.gy += (gy - P.gy) * Math.min(1, dt * 10);
+  P.pos.y = P.gy + P.jy - P.squat;
   camera.position.copy(P.pos);
   camera.rotation.set(P.pitch, P.yaw, Math.sin(P.bob * 0.5) * 0.004, 'YXZ');
 }
@@ -297,7 +335,7 @@ function seg(id, val) { document.querySelectorAll(`#${id} button`).forEach((b) =
 function syncUI() {
   seg('speed', S.cycle); $('pause').checked = S.paused; seg('wx', S.weather); seg('qual', S.quality); seg('mode', S.mode);
   $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); $('auto').checked = S.auto; $('wind').value = S.wind; $('vol').value = S.volume;
-  $('showclock').checked = S.clock; $('showfps').checked = S.fps;
+  $('showclock').checked = S.clock; $('showfps').checked = S.fps; $('camp').checked = !!S.camp;
   $('qnote').textContent = S.quality === 'auto' ? `Сейчас: ${Q.name.toLowerCase()}` : '';
 }
 $('speed').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.cycle = +v; save(); syncUI(); });
@@ -314,10 +352,27 @@ $('showfps').addEventListener('change', (e) => { S.fps = e.target.checked; save(
 $('mode').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.mode = v; save(); syncUI(); if (v === 'walk') camera.position.copy(P.pos); });
 $('qual').addEventListener('click', (e) => {
   const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.quality = v; save();
-  const nk = v === 'auto' ? (coarse ? 'low' : 'high') : v; autoDone = v !== 'auto';
-  if (nk !== tierKey) { tierKey = nk; Q = TIERS[nk]; rebuildSoon(); }
+  const nk = v === 'auto' ? (coarse ? 'med' : 'high') : v; autoDone = v !== 'auto';
+  if (nk !== tierKey) { tierKey = nk; Q = tier(nk); rebuildSoon(); }
   syncUI();
 });
+$('camp').addEventListener('change', (e) => { S.camp = e.target.checked; save(); camp.setVisible(S.camp); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } applyRenderQuality(); });
+let photo = false;
+function setPhoto(v) { photo = v; document.body.classList.toggle('photo', v); closePanel(); }
+$('photo').addEventListener('click', (e) => { e.stopPropagation(); setPhoto(true); });
+$('photoexit').addEventListener('click', () => setPhoto(false));
+let snapReq = false;
+$('snap').addEventListener('click', () => { snapReq = true; });
+function doSnap() {
+  try {
+    canvas.toBlob((b) => {
+      if (!b) return; const a = document.createElement('a'); a.href = URL.createObjectURL(b);
+      const d = new Date(); a.download = `ostrov-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}-${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}.png`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      $('snapmsg').classList.add('on'); setTimeout(() => $('snapmsg').classList.remove('on'), 1800);
+    }, 'image/png');
+  } catch (err) { /* downloads blocked here */ }
+}
 $('newisland').addEventListener('click', () => { S.seed = (Math.random() * 1e9) | 0; save(); rebuildSoon(); });
 function rebuildSoon() { $('busy').hidden = false; setTimeout(() => { build(); $('busy').hidden = true; syncUI(); }, 60); }
 
@@ -328,10 +383,10 @@ function autoQuality(dt) {
   autoT += dt; autoFrames++;
   if (autoT > 5) {
     const fps = autoFrames / autoT; autoT = 0; autoFrames = 0;
-    if (fps < 40 && tierKey === 'high') { tierKey = 'med'; Q = TIERS.med; rebuildSoon(); }
-    else if (fps < 27 && tierKey === 'med') { tierKey = 'low'; Q = TIERS.low; rebuildSoon(); autoDone = true; }
+    if (fps < 40 && tierKey === 'high') { tierKey = 'med'; Q = tier('med'); rebuildSoon(); }
+    else if (fps < (coarse ? 33 : 27) && tierKey === 'med') { tierKey = 'low'; Q = tier('low'); rebuildSoon(); autoDone = true; }
     else if (fps < 24 && tierKey === 'low') { Q = Object.assign({}, Q, { scale: 0.72 }); applyRenderQuality(); autoDone = true; }
-    else if (fps > 57 && tierKey === 'low' && !upgraded) { upgraded = true; tierKey = 'med'; Q = TIERS.med; rebuildSoon(); }
+    else if (fps > 57 && tierKey === 'low' && !upgraded && !coarse) { upgraded = true; tierKey = 'med'; Q = tier('med'); rebuildSoon(); }
     else autoDone = true;
   }
 }
@@ -343,6 +398,7 @@ $('enter').addEventListener('click', () => {
   $('hint').classList.add('on'); setTimeout(() => $('hint').classList.remove('on'), 5500);
 });
 document.addEventListener('visibilitychange', () => audio.suspend(document.hidden));
+if (location.protocol === 'https:' && 'serviceWorker' in navigator && /github\.io$/.test(location.hostname)) { try { navigator.serviceWorker.register('sw.js').catch(() => {}); } catch (e) { /* not allowed here */ } }
 canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); $('lost').hidden = false; });
 canvas.addEventListener('webglcontextrestored', () => location.reload());
 addEventListener('resize', () => applyRenderQuality());
@@ -358,15 +414,19 @@ function frame(now) {
     if (S.hour >= 24) { S.hour -= 24; S.day++; }
     if (S.auto) { autoClock += (S.hour - prev + 24) % 24; if (autoClock > nextAuto) { autoClock = 0; nextAuto = 2 + Math.random() * 3.5; const opts = NEXT[S.weather]; let n = opts[Math.floor(Math.random() * opts.length)]; if (n === 'fog' && !(S.hour > 3 && S.hour < 9)) n = 'overcast'; S.weather = n; weatherRate = 1 / 40; if (!panel.hidden) syncUI(); } }
   }
-  if (started || S.mode === 'fly') updatePlayer(dt); else { P.yaw += dt * 0.03; camera.position.copy(P.pos); camera.rotation.set(0.03, P.yaw, 0, 'YXZ'); }
+  if (window.__island && window.__island.freeze) { /* debug camera */ }
+  else if (started || S.mode === 'fly') updatePlayer(dt); else { P.yaw += dt * 0.03; camera.position.copy(P.pos); camera.rotation.set(0.03, P.yaw, 0, 'YXZ'); }
   updateEnv(dt); lightning(dt);
   U.uCam.value.copy(camera.position);
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
+  ducks.update(dt, gameTime, env);
+  camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
   if (audio.on) {
     const nd = fauna.nearest(camera.position); let pan = 0;
     if (nd.p) { const v = nd.p.clone().sub(camera.position); right.set(Math.cos(P.yaw), 0, -Math.sin(P.yaw)); pan = clamp(v.dot(right) / (nd.d + 0.01), -1, 1); }
     const nearW = clamp(1.2 - (camera.position.y - Math.max(0, world.H(camera.position.x, camera.position.z)) - 1.2) * 0.2 - world.H(camera.position.x, camera.position.z) * 0.35, 0.3, 1);
+    if (camp.state && S.camp) { const d = camera.position.distanceTo(camp.fireP); audio.fireSound(Math.max(camp.state.fire, camp.state.out ? 0.15 : 0) * clamp(1 - d / 22, 0, 1) ** 1.5, W.rain); } else audio.fireSound(0, 0);
     audio.update(dt, { volume: S.volume, wind: windS, gust: 0.5 + 0.5 * Math.sin(gameTime * 0.37) * Math.sin(gameTime * 0.11), water: nearW, rain: W.rain,
       birds: (sm(4.5, 6, env.h) * (1 - sm(8.5, 10, env.h)) * 0.9 + 0.3 * env.day + 0.15 * sm(18.5, 19.5, env.h) * (1 - sm(20.5, 21.5, env.h))) * (1 - sm(0.2, 0.6, W.rain)),
       crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: 0.7 * sm(-2, -8, env.el) * (1 - W.rain * 0.4), owl: sm(-6, -12, env.el) * env.dry,
@@ -374,10 +434,12 @@ function frame(now) {
   }
   autoQuality(dt);
   if (composer && Q.bloom) composer.render(); else renderer.render(scene, camera);
+  if (snapReq) { snapReq = false; doSnap(); }
   // HUD
   fpsS += (1 / Math.max(dt, 1e-3) - fpsS) * 0.05;
   const mn = Math.floor(S.hour * 60);
   if (mn !== lastMin || S.weather !== lastWx) { lastMin = mn; lastWx = S.weather; $('clock').textContent = `${fmt(S.hour)} · ${WEATHER[S.weather].name}`; if (!panel.hidden) { $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); } }
+  document.body.classList.toggle('touchui', touchUI());
   $('clock').hidden = !S.clock; $('fps').hidden = !S.fps;
   if (S.fps) { renderer.getDrawingBufferSize(dbs); $('fps').textContent = `${Math.round(fpsS)} к/с · ${Q.name.toLowerCase()} · ${dbs.x}×${dbs.y}`; }
   if ((hintT += dt) > 1) {
@@ -393,6 +455,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { testThunder, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

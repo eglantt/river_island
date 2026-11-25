@@ -1,3 +1,31 @@
+function thunderGraph(ctx, dest, buf, t0, near) {
+  const R = Math.random;
+  const nb = (t, dur, type, f, q, vol, fEnd, att = 0.01) => {
+    const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true;
+    const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); if (fEnd) fl.frequency.exponentialRampToValueAtTime(fEnd, t + att + dur); fl.Q.value = q;
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + att); g.gain.exponentialRampToValueAtTime(0.0001, t + att + dur);
+    s.connect(fl); fl.connect(g); g.connect(dest); s.start(t, R() * 2); s.stop(t + att + dur + 0.1);
+  };
+  if (near > 0.45) { nb(t0, 0.22, 'highpass', 1800, 0.6, 0.9 * near, null, 0.003); nb(t0 + 0.02, 0.7, 'bandpass', 2400, 0.8, 0.55 * near, 700, 0.005); }
+  const k = 3 + Math.floor(R() * 3);
+  for (let i = 0; i < k; i++) {
+    const st = t0 + 0.12 + i * (0.45 + R() * 0.9);
+    nb(st, 1.6 + R() * 2.4, 'bandpass', 260 + R() * 480, 0.55, (0.6 + 0.35 * near) * (1 - i * 0.12), 110, 0.18 + R() * 0.2);
+  }
+  nb(t0 + 0.1, 5 + R() * 2, 'lowpass', 950, 0.5, 0.5 * (0.5 + near * 0.5), 160, 0.3);
+  nb(t0 + 0.2, 6, 'lowpass', 140, 0.7, 0.6, 50, 0.5);
+}
+export async function testThunder() {
+  const sr = 22050, ctx = new OfflineAudioContext(1, sr * 9, sr), buf = ctx.createBuffer(1, sr * 3, sr), d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  thunderGraph(ctx, ctx.destination, buf, 0.1, 0.8);
+  const out = (await ctx.startRendering()).getChannelData(0);
+  let all = 0, hi = 0, peak = 0; const secs = [];
+  for (let i = 1; i < out.length; i++) { all += out[i] * out[i]; const h = out[i] - out[i - 1]; hi += h * h; peak = Math.max(peak, Math.abs(out[i])); }
+  for (let s = 0; s < 9; s++) { let e = 0; for (let i = s * sr; i < (s + 1) * sr; i++) e += out[i] * out[i]; secs.push(+Math.sqrt(e / sr).toFixed(3)); }
+  return { rms: +Math.sqrt(all / out.length).toFixed(3), hiRms: +Math.sqrt(hi / out.length).toFixed(3), peak: +peak.toFixed(2), perSecond: secs };
+}
+
 // Fully synthesized ambience: wind, leaves, river, rain, birds, crickets, frogs, owl, splash, thunder, dragonfly buzz
 export function createAudio() {
   let ac = null, master, noiseBuf, ch = {}, nextBird = 0, nextCricket = 0, nextFrog = 0, nextOwl = 0, buzz = null;
@@ -70,12 +98,7 @@ export function createAudio() {
     const g = ac.createGain(); env(g, t, 0.01, vol, dur); s.connect(fl); fl.connect(g); g.connect(out || master); s.start(t, R() * 2); s.stop(t + dur + 0.1);
   }
   function splash(vol) { if (!ac) return; const t = ac.currentTime; noiseBurst(t, 0.35, 'bandpass', 1800, 1.2, vol * 0.5, null, 700); noiseBurst(t + 0.05, 0.25, 'highpass', 3500, 0.7, vol * 0.25); }
-  function thunder(delay, near) {
-    if (!ac) return; const t = ac.currentTime + delay;
-    if (near > 0.5) noiseBurst(t, 0.4, 'highpass', 1500, 0.5, 0.35 * near);
-    noiseBurst(t + 0.05, 4 + R() * 2, 'lowpass', 260, 0.8, 0.9 * (0.4 + near * 0.6), null, 60);
-    noiseBurst(t + 0.6 + R(), 3, 'lowpass', 160, 0.8, 0.5, null, 50);
-  }
+  function thunder(delay, near) { if (!ac) return; thunderGraph(ac, master, noiseBuf, ac.currentTime + delay, near); }
   const set = (g, v) => g.gain.setTargetAtTime(v, ac.currentTime, 0.4);
   function update(dt, s) {
     if (!ac) return;
@@ -92,6 +115,28 @@ export function createAudio() {
     if (now > nextOwl) { if (s.owl > 0.3 && R() < 0.5) owl(0.05); nextOwl = now + 12 + R() * 25; }
     set(buzz.g, s.buzz * 0.05); if (buzz.pan.pan) buzz.pan.pan.setTargetAtTime(s.buzzPan, now, 0.1);
   }
+  let fireCh = null, nextCrackle = 0;
+  function step(kind, vol = 1) {
+    if (!ac) return; const t = ac.currentTime, v = (0.8 + Math.random() * 0.4) * vol, f = 0.85 + Math.random() * 0.3;
+    if (kind === 'water') { noiseBurst(t, 0.22, 'bandpass', 1300 * f, 1, 0.16 * v, null, 600); return; }
+    if (kind === 'stone') { noiseBurst(t, 0.04, 'bandpass', 2600 * f, 3, 0.18 * v); noiseBurst(t, 0.06, 'lowpass', 320, 0.7, 0.12 * v); return; }
+    if (kind === 'sand') { noiseBurst(t, 0.11, 'bandpass', 3400 * f, 1.2, 0.09 * v); noiseBurst(t + 0.035, 0.07, 'bandpass', 2600 * f, 1.4, 0.06 * v); return; }
+    noiseBurst(t, 0.09, 'bandpass', 1700 * f, 0.8, 0.08 * v); noiseBurst(t + 0.01, 0.06, 'highpass', 4200, 0.7, 0.05 * v);
+  }
+  function fireSound(level, rain) {
+    if (!ac) return;
+    if (!fireCh) {
+      const mk = (type, f, q) => { const s = ac.createBufferSource(); s.buffer = noiseBuf; s.loop = true; const fl = ac.createBiquadFilter(); fl.type = type; fl.frequency.value = f; fl.Q.value = q; const g = ac.createGain(); g.gain.value = 0; s.connect(fl); fl.connect(g); g.connect(master); s.start(); return g; };
+      fireCh = { roar: mk('lowpass', 420, 0.7), hiss: mk('bandpass', 5200, 0.8) };
+    }
+    set(fireCh.roar, level * 0.22); set(fireCh.hiss, level * rain * 0.12 + (level > 0 ? 0.004 : 0));
+    const now = ac.currentTime;
+    if (level > 0.03 && now > nextCrackle) {
+      const n = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < n; i++) noiseBurst(now + i * 0.03, 0.012 + Math.random() * 0.03, 'highpass', 1800 + Math.random() * 2500, 0.7, (0.05 + Math.random() * 0.12) * level);
+      nextCrackle = now + (0.08 + Math.random() * 0.5) / (0.3 + level);
+    }
+  }
   function suspend(v) { if (!ac) return; v ? ac.suspend() : ac.resume(); }
-  return { init, update, splash, thunder, suspend, get on() { return !!ac; } };
+  return { init, update, splash, thunder, step, fireSound, suspend, get on() { return !!ac; } };
 }

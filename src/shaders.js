@@ -12,7 +12,7 @@ export const U = {
   uAmb: { value: new THREE.Color() }, uWet: { value: 0 }, uRain: { value: 0 }, uFlash: { value: 0 },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
-  uFF: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-300, -130, 600, 260) },
+  uFF: { value: 0 }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
   uRiver: { value: new THREE.Vector4(0, 0, 0, 40) }, // meander a1,f1(phase),.., halfwidth
 };
 
@@ -40,6 +40,10 @@ vec3 skyBase(vec3 d){
 
 // ---------- generic material patch: wind sway, cloud shadows, ground detail ----------
 const PROJ = /* glsl */`
+#ifdef LILY
+  transformed.xz *= mix(0.25, 1.0, uOpen * sway + (1.0 - sway));
+  transformed.y += sway * (1.0 - uOpen) * 0.05;
+#endif
 vec4 mvPosition = vec4(transformed, 1.0);
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
@@ -58,10 +62,10 @@ gl_Position = projectionMatrix * mvPosition;
 export function patch(mat, key, amp = 0, defs = {}) {
   mat.defines = Object.assign({}, mat.defines || {}, defs);
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
+    for (const k of ['uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
+    sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
     sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
@@ -132,7 +136,7 @@ export function skyMaterial() {
       varying vec3 vDir;
       void main(){ vDir = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position,1.0); gl_Position = p.xyww; }`,
     fragmentShader: /* glsl */`
-      uniform sampler2D tNoise; uniform vec2 uCloudOff; uniform float uCover, uDark, uSunVis, uNight, uMoonPhase, uMoonVis, uTime, uFlash, uSunOccM;
+      uniform sampler2D tNoise; uniform vec2 uCloudOff; uniform float uCover, uDark, uSunVis, uNight, uMoonPhase, uMoonVis, uTime, uFlash, uSunOccM, uRainbow;
       uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uSkyFog; uniform float uFogSky;
       varying vec3 vDir;
       ${CLOUD}${SKYFN}
@@ -190,6 +194,16 @@ export function skyMaterial() {
           col = mix(col, cc, a);
           col = mix(col, uHor, (1.0 - smoothstep(0.0, 0.06, d.y)) * 0.6);
         }
+        if (uRainbow > 0.001 && d.y > 0.0) {
+          float ang = acos(clamp(dot(d, -uSunDir), -1.0, 1.0));
+          float t = (ang - 0.692) / 0.042; // ~39.6..42 deg: violet inside, red outside
+          if (t > -0.3 && t < 1.3) {
+            vec3 rb = clamp(vec3(abs(t * 6.0 - 3.6) - 1.0, 2.0 - abs(t * 6.0 - 2.4), 2.0 - abs(t * 6.0 - 1.2)), 0.0, 1.0);
+            float a = smoothstep(-0.3, 0.1, t) * (1.0 - smoothstep(0.9, 1.3, t)) * smoothstep(0.0, 0.08, d.y);
+            col += rb * a * uRainbow * 0.5 * (1.0 - cov * 0.5);
+            col += vec3(0.5, 0.52, 0.55) * smoothstep(0.0, -0.3, t) * smoothstep(-1.2, -0.3, t) * uRainbow * 0.05;
+          }
+        }
         float hb = uFogSky * (1.0 - smoothstep(-0.02, 0.22 + 0.55*uFogSky, d.y));
         col = mix(col, uSkyFog, max(hb, uFogSky*uFogSky*0.8));
         col += vec3(0.75, 0.8, 1.0) * uFlash * (0.4 + 0.8*cov);
@@ -218,6 +232,7 @@ export function waterMaterial() {
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float mzf(float x){ float s = sign(x), ax = abs(x); return uRiver.x * s * (125.0 * smoothstep(110.0, 430.0, ax) - 85.0 * smoothstep(620.0, 1050.0, ax)) + uRiver.z * sin(x * 0.019 + uRiver.y); }
       vec2 ripple(vec2 p, vec2 c, float age, float amp){
         vec2 dv = p - c; float d = length(dv); float r = age*1.4;
         float w = sin((d - r)*14.0) * exp(-abs(d - r)*5.0) * exp(-age*0.9) * amp;
@@ -225,11 +240,12 @@ export function waterMaterial() {
       }
       void main(){
         vec3 V = uCam - vWp; float dist = length(V); V /= dist;
-        vec2 flow = vec2(1.0, 0.0);
+        vec2 flow = normalize(vec2(1.0, (mzf(vWp.x + 2.0) - mzf(vWp.x - 2.0)) * 0.25));
         float sp = 0.035 + uWind*0.03;
-        vec3 n1 = texture2D(tWaterN, vWp.xz*0.045 + flow*uTime*sp).xyz*2.0 - 1.0;
+        vec2 q = mat2(flow.x, -flow.y, flow.y, flow.x) * vWp.xz; // river frame: x along the current
+        vec3 n1 = texture2D(tWaterN, q*0.045 + vec2(uTime*sp, 0.0)).xyz*2.0 - 1.0;
         vec3 n2 = texture2D(tWaterN, vWp.xz*0.11 + vec2(0.3,-0.6)*uTime*sp*1.3 + uWindDir*uTime*0.01).xyz*2.0 - 1.0;
-        vec3 n3 = texture2D(tWaterN, vWp.xz*0.013 + flow*uTime*0.012).xyz*2.0 - 1.0;
+        vec3 n3 = texture2D(tWaterN, q*0.013 + vec2(uTime*0.012, 0.0)).xyz*2.0 - 1.0;
         vec2 nxy = n1.xy*0.55 + n2.xy*0.35*(0.5+uWind) + n3.xy*0.5;
         // rain ripples
         if (uRain > 0.01) {
@@ -266,7 +282,7 @@ export function waterMaterial() {
         refl = mix(refl, uSkyFog, uFogSky*0.75);
         // reflected forest wall along banks
         float side = sign(R.z + 1e-4);
-        float mz = uRiver.x*sin(vWp.x*0.011 + uRiver.y) + uRiver.z*sin(vWp.x*0.023 + 1.3);
+        float mz = mzf(vWp.x);
         float bankZ = mz + side*(uRiver.w + 14.0);
         float tz = (bankZ - vWp.z) / (R.z + side*1e-4);
         if (tz > 0.0) {

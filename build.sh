@@ -10,4 +10,5 @@ b = open('dist/bundle.js', encoding='utf-8').read().replace('</script', '<\\/scr
 open('index.html', 'w', encoding='utf-8').write(t.replace('/*BUNDLE*/', b))
 PY
 rm -f dist/bundle.js
+python3 gen_pwa.py
 ls -l index.html
