@@ -7,12 +7,12 @@ import { U } from './shaders.js';
 import { noiseTextureData, waterNormalData } from './noise.js';
 import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
-import { createAudio, testThunder } from './audio.js';
+import { createAudio, testThunder, testCrackle } from './audio.js';
 import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.11';
+const VERSION = '0.0.12';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -460,6 +460,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { testThunder, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));
