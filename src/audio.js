@@ -1,5 +1,5 @@
 function thunderGraph(ctx, dest0, buf, t0, near) {
-  const R = Math.random, dest = ctx.createGain(); dest.gain.value = 2.8; dest.connect(dest0);
+  const R = Math.random, dest = ctx.createGain(); dest.gain.value = 3.6; dest.connect(dest0);
   const nb = (t, dur, f, q, vol, fEnd, att = 0.01, type = 'bandpass') => {
     const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true;
     const fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.setValueAtTime(f, t); if (fEnd) fl.frequency.exponentialRampToValueAtTime(fEnd, t + att + dur); fl.Q.value = q;
@@ -34,7 +34,7 @@ export async function testThunder() {
   const out = (await ctx.startRendering()).getChannelData(0);
   const rc = new OfflineAudioContext(1, sr * 9, sr), rs = rc.createBufferSource(); rs.buffer = buf; rs.loop = true;
   const f1 = rc.createBiquadFilter(); f1.type = 'highpass'; f1.frequency.value = 900; const f2 = rc.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 7500;
-  const rg = rc.createGain(); rg.gain.value = 0.4 * 0.35; rs.connect(f1); f1.connect(f2); f2.connect(rg); band(rc, rg); rs.start();
+  const rg = rc.createGain(); rg.gain.value = 0.4 * 0.7 * 0.15; rs.connect(f1); f1.connect(f2); f2.connect(rg); band(rc, rg); rs.start();
   const ro = (await rc.startRendering()).getChannelData(0); let re = 0; for (let i = 0; i < ro.length; i++) re += ro[i] * ro[i];
   const rainRms = Math.sqrt(re / ro.length);
   let all = 0, hi = 0, peak = 0; const secs = [];
@@ -124,12 +124,12 @@ export function createAudio() {
   function update(dt, s) {
     if (!ac) return;
     master.gain.setTargetAtTime(s.volume, ac.currentTime, 0.2);
-    set(ch.wind.g, 0.05 + s.wind * 0.35 * (0.5 + s.gust)); ch.wind.f.frequency.setTargetAtTime(260 + s.gust * 380 + s.wind * 200, ac.currentTime, 0.5);
+    const duck = ac.currentTime > duckFrom && ac.currentTime < duckTo ? 0.15 : 1;
+    set(ch.wind.g, (0.035 + s.wind * 0.25 * (0.5 + s.gust)) * (0.4 + 0.6 * duck)); ch.wind.f.frequency.setTargetAtTime(260 + s.gust * 380 + s.wind * 200, ac.currentTime, 0.5);
     set(ch.leaves.g, s.wind * 0.12 * (0.3 + s.gust));
     set(ch.river.g, 0.10 + 0.22 * s.water); set(ch.babble.g, 0.05 * s.water);
     ch.babble.f.frequency.setTargetAtTime(1100 + Math.sin(performance.now() * 0.0013) * 300 + Math.sin(performance.now() * 0.0047) * 200, ac.currentTime, 0.1);
-    const duck = ac.currentTime > duckFrom && ac.currentTime < duckTo ? 0.35 : 1;
-    set(ch.rain.g, s.rain * 0.4 * duck); set(ch.rainLow.g, s.rain * 0.25 * duck);
+    set(ch.rain.g, s.rain * 0.28 * duck); set(ch.rainLow.g, s.rain * 0.17 * duck);
     const now = ac.currentTime;
     if (now > nextBird) { if (s.birds > 0.05 && R() < s.birds) chirp(0.05 + 0.05 * s.birds); nextBird = now + (0.6 + R() * 4) / (0.3 + s.birds); }
     if (now > nextCricket) { if (s.crickets > 0.05) cricket(0.012 * s.crickets); nextCricket = now + 0.8 + R() * 1.5 / (0.2 + s.crickets); }

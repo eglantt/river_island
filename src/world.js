@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { makeNoise, rng } from './noise.js';
+import { makeFoliageAtlas, CardAcc, cardAxes, TILE } from './foliage.js';
 import { U, patch, waterMaterial, rainMaterial, pointsMaterial, mistMaterial, skyMaterial } from './shaders.js';
 
 const C = (h) => new THREE.Color(h);
@@ -54,6 +55,18 @@ export function blobGeo(N, c, r, sy, detail = 1, rough = 0.28) {
   return g;
 }
 
+const atlasCache = {};
+function foliageMats(Q) {
+  const size = Q.atlas;
+  if (!atlasCache[size]) atlasCache[size] = makeFoliageAtlas(size);
+  const map = atlasCache[size];
+  const mk = (key, amp) => {
+    const m = patch(new THREE.MeshLambertMaterial({ vertexColors: true, map, alphaTest: 0.5, side: THREE.DoubleSide, alphaToCoverage: !!Q.bloom }), key, amp, { NOFLIP: '', FOLI: '' });
+    return m;
+  };
+  const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map, alphaTest: 0.5, side: THREE.DoubleSide });
+  return { mk, depth };
+}
 export function buildWorld(seed, Q) {
   const R = rng(seed), N = makeNoise(seed), group = new THREE.Group();
   const meshes = {};
@@ -285,6 +298,8 @@ export function buildWorld(seed, Q) {
   }
 
   // ---------- island vegetation ----------
+  const FM = foliageMats(Q), cardAcc = new CardAcc(), bushCards = new CardAcc();
+  const tint = (k = 1) => new THREE.Color(1, 1, 0.92).multiplyScalar((0.85 + R() * 0.3) * k);
   const trunks = []; // collision circles
   const trunkAcc = new Acc(), leafAcc = new Acc(), rockAcc = new Acc(), bushAcc = new Acc();
   const onIsland = (x, z) => islandE(x, z) < 0.95 && H(x, z) > 0.2;
@@ -311,12 +326,20 @@ export function buildWorld(seed, Q) {
       return N.n2(v.y * 4 + v.x * 9, v.z * 9) > 0.35 ? barkDark : barkCol;
     };
     function leaves(c, r) {
-      const col = C(lc[Math.floor(R() * lc.length)]), sy = kind === 'willow' ? 1.35 : kind === 'birch' ? 1.2 : 0.95;
+      const sy = kind === 'willow' ? 1.35 : kind === 'birch' ? 1.2 : 0.95;
       const cc = kind === 'willow' ? c.clone().add(new THREE.Vector3(0, -r * 0.45, 0)) : c;
-      leafAcc.add(blobGeo(N, cc, r, sy, 2, 0.3), (v) => tmp.copy(col).multiplyScalar(0.62 + 0.55 * sm(cc.y - r * sy, cc.y + r * sy, v.y) + 0.1 * N.n2(v.x * 3, v.z * 3)), (v) => 0.25 + 0.75 * Math.max(0, (v.y - g0) / height));
-      if (kind === 'willow') for (let k = 0; k < 3; k++) {
-        const hc = cc.clone().add(new THREE.Vector3((R() - 0.5) * r * 1.6, -r * (0.9 + R() * 0.5), (R() - 0.5) * r * 1.6));
-        leafAcc.add(blobGeo(N, hc, r * 0.38, 2.4, 1, 0.2), (v) => tmp.copy(col).multiplyScalar(0.7 + 0.35 * sm(hc.y - r, hc.y + r, v.y)), () => 0.9);
+      const tile = kind === 'birch' ? TILE.birch : kind === 'willow' ? TILE.willow : TILE.oak;
+      const sw = (y) => 0.25 + 0.75 * Math.max(0, (y - g0) / height);
+      cardAcc.coreFrom(blobGeo(N, cc, r * 0.6, sy, 1, 0.3), tint(0.55), sw(cc.y));
+      const n = Q.cards + (kind === 'willow' ? 2 : 0);
+      for (let k = 0; k < n; k++) {
+        const out = new THREE.Vector3(R() - 0.5, (R() - 0.35) * 0.9, R() - 0.5).normalize();
+        const p = cc.clone().add(new THREE.Vector3(out.x * r * 0.62, out.y * r * 0.62 * sy, out.z * r * 0.62).multiplyScalar(0.55 + R() * 0.55));
+        const size = r * (0.7 + R() * 0.35) * (kind === 'birch' ? 0.95 : 1);
+        const mode = kind === 'willow' && R() < 0.6 ? 'hang' : 'out';
+        if (mode === 'hang') p.y -= r * 0.5;
+        const [ax, ay] = cardAxes(R, size, out, mode);
+        cardAcc.card(p, ax, ay, mode === 'hang' ? TILE.willow : tile, cc, tint(p.y > cc.y ? 1.05 : 0.85), sw(p.y - size), sw(p.y + size), R() < 0.5);
       }
     }
     function branch(p, dir, len, r, depth) {
@@ -347,9 +370,13 @@ export function buildWorld(seed, Q) {
     for (let i = 0; i < nB; i++) {
       const c = randIsland(0.9); if (!c) continue;
       const [x, z] = c, g0 = H(x, z), col = C(leafCols.bush[Math.floor(R() * 4)]), k = 3 + Math.floor(R() * 4), sz = 0.6 + R() * 0.6;
-      for (let j = 0; j < k; j++) {
-        const cc = new THREE.Vector3(x + (R() - 0.5) * sz * 1.8, g0 + sz * (0.35 + R() * 0.5), z + (R() - 0.5) * sz * 1.8), r = sz * (0.45 + R() * 0.4);
-        bushAcc.add(blobGeo(N, cc, r, 0.85, 2, 0.3), (v) => tmp.copy(col).multiplyScalar(0.62 + 0.6 * sm(g0, cc.y + r, v.y)), (v) => Math.max(0, v.y - g0) * 0.25);
+      const bc = new THREE.Vector3(x, g0 + sz * 0.55, z);
+      bushCards.coreFrom(blobGeo(N, bc, sz * 0.62, 0.8, 1, 0.3), tint(0.5), 0.08);
+      for (let j = 0; j < Q.bushCards + k; j++) {
+        const out = new THREE.Vector3(R() - 0.5, R() * 0.6, R() - 0.5).normalize();
+        const p = bc.clone().addScaledVector(out, sz * (0.25 + R() * 0.45)), size = sz * (0.65 + R() * 0.3);
+        const [ax, ay] = cardAxes(R, size, out, 'out');
+        bushCards.card(p, ax, ay, TILE.bush, bc, tint(p.y > bc.y ? 1 : 0.8), Math.max(0, p.y - size - g0) * 0.25, (p.y + size - g0) * 0.25, R() < 0.5);
       }
     }
     // rocks along the shore
@@ -420,6 +447,11 @@ export function buildWorld(seed, Q) {
   const barkMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'bark', 0.32);
   const addAcc = (acc, mat, cast = true) => { if (!acc.p.length) return; const m = new THREE.Mesh(acc.build(), mat); m.castShadow = cast; m.receiveShadow = true; group.add(m); };
   addAcc(trunkAcc, barkMat); addAcc(leafAcc, leafMat); addAcc(bushAcc, leafMat); addAcc(rockAcc, barkMat);
+  const folMat = FM.mk('foliage', 0.32), bushMat = FM.mk('bushfol', 0.32);
+  for (const [acc, mat] of [[cardAcc, folMat], [bushCards, bushMat]]) {
+    if (!acc.p.length) continue;
+    const m = new THREE.Mesh(acc.build(), mat); m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = FM.depth; group.add(m);
+  }
 
   // ---------- instanced helpers ----------
   const dummy = new THREE.Object3D();
@@ -532,27 +564,54 @@ export function buildWorld(seed, Q) {
       return null;
     });
   }
-  // bank forest (instanced conifers + broadleaves)
+  // bank forest (instanced conifers + broadleaves; foliage cards; simpler geometry far away)
   {
-    const conA = new Acc(), decA = new Acc(), trunkC = C('#4a3a2a');
-    conA.add(limbGeo(new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 2.5, 0), 0.25, 0.18, 5, 1), () => trunkC, () => 0);
-    for (let k = 0; k < 4; k++) {
-      const cg = new THREE.ConeGeometry(2.3 - k * 0.45, 3.4 - k * 0.3, 7, 1); cg.translate(0, 3.2 + k * 1.9, 0);
-      const cc = C(['#2c4a26', '#30522a', '#365a2c', '#3c6230'][k]);
-      conA.add(cg, (v, n) => tmp.copy(cc).multiplyScalar(0.6 + 0.5 * Math.max(0, n.y)), (v) => v.y * 0.015);
-    }
-    decA.add(limbGeo(new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 3, 0), 0.3, 0.2, 5, 1), () => trunkC, () => 0);
-    for (let k = 0; k < 5; k++) {
-      const c = new THREE.Vector3((R() - 0.5) * 2.6, 3.4 + R() * 2.6, (R() - 0.5) * 2.6), r = 1.9 + R() * 0.8, cc = C('#46702f');
-      decA.add(blobGeo(N, c, r, 0.9, 0, 0.25), (v) => tmp.copy(cc).multiplyScalar(0.5 + 0.6 * sm(c.y - r, c.y + r, v.y)), (v) => v.y * 0.03);
-    }
+    const trunkC = C('#4a3a2a'), V3 = THREE.Vector3;
+    const conT = new Acc(), decT = new Acc();
+    conT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 10.5, 0), 0.25, 0.06, 5, 2), () => trunkC, () => 0);
+    decT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 4.2, 0), 0.3, 0.16, 5, 1), () => trunkC, () => 0);
+    for (let k = 0; k < 3; k++) { const a = k * 2.1; decT.add(limbGeo(new V3(0, 3.6, 0), new V3(Math.cos(a) * 1.3, 5.6, Math.sin(a) * 1.3), 0.12, 0.05, 4, 1), () => trunkC, () => 0); }
+    const conifer = (levels, per) => {
+      const acc = new CardAcc();
+      acc.coreFrom(new THREE.ConeGeometry(0.75, 8.2, 6, 1).translate(0, 6.0, 0), new THREE.Color(0.62, 0.68, 0.58), 0.05);
+      for (let l = 0; l < levels; l++) {
+        const t = l / levels, y = 1.8 + t * 8.4, len = 2.7 * (1 - t * 0.8) + 0.4;
+        for (let k = 0; k < per; k++) {
+          const a = (k + (l % 2) * 0.5) / per * Math.PI * 2 + R() * 0.4, droop = 0.35 + R() * 0.25 - t * 0.15;
+          const dir = new V3(Math.cos(a), -droop, Math.sin(a)).normalize(), base = new V3(0, y, 0);
+          const c = base.clone().addScaledVector(dir, len / 2 + 0.1), side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
+          const ax = dir.clone().multiplyScalar(len / 2 + 0.1);
+          // two crossed planes per bough so it reads from the side as well as from below
+          const roll = (R() - 0.5) * 0.5;
+          const ay1 = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(len * 0.42);
+          const ay2 = up.clone().multiplyScalar(Math.cos(roll)).addScaledVector(side, -Math.sin(roll)).multiplyScalar(len * 0.3);
+          const tn = tint(0.85 + t * 0.3);
+          acc.card(c, ax, ay1, TILE.spruce, base, tn, y * 0.012, (y + 0.4) * 0.016);
+          acc.card(c, ax, ay2, TILE.spruce, base, tn.clone().multiplyScalar(0.92), y * 0.012, (y + 0.4) * 0.016);
+        }
+      }
+      for (let k = 0; k < 2; k++) { const a = k * Math.PI / 2; acc.card(new V3(0, 10.6, 0), new V3(Math.cos(a) * 0.4, 0, Math.sin(a) * 0.4), new V3(0, 0.75, 0), TILE.spruce, new V3(0, 10.0, 0), tint(1.05), 0.12, 0.18); }
+      return acc.build();
+    };
+    const broad = (n) => {
+      const acc = new CardAcc(), cc = new V3(0, 5.6, 0);
+      acc.coreFrom(blobGeo(N, cc, 2.0, 0.85, 1, 0.3), new THREE.Color(0.42, 0.45, 0.38), 0.12);
+      for (let k = 0; k < n; k++) {
+        const out = new V3(R() - 0.5, (R() - 0.3) * 0.8, R() - 0.5).normalize();
+        const p = cc.clone().addScaledVector(out, 1.4 + R() * 0.9), size = 1.5 + R() * 0.6;
+        const [ax, ay] = cardAxes(R, size, out, 'out');
+        acc.card(p, ax, ay, TILE.oak, cc, tint(p.y > cc.y ? 1.05 : 0.8), (p.y - size) * 0.03, (p.y + size) * 0.03, R() < 0.5);
+      }
+      return acc.build();
+    };
+    const conNear = conifer(Q.spruceLv, Q.sprucePer), conFar = conifer(4, 4), decNear = broad(Q.forestCards), decFar = broad(5);
+    const fmat = FM.mk('forestfol', 0.25);
     const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'forest', 0.25);
-    const tint = new THREE.Color();
-    const placeF = (con) => (d) => {
+    const ftint = new THREE.Color();
+    const placeF = (con, far) => (d) => {
       for (let t = 0; t < 40; t++) {
-        const far = R() < Q.far / (Q.far + Q.forest);
         const x = (R() * 2 - 1) * (far ? 1050 : 430), side = R() < 0.5 ? -1 : 1;
-        const bd = far ? 60 + R() * 900 : 6 + Math.pow(R(), 2.2) * 200;
+        const bd = far ? 75 + R() * 900 : 6 + Math.pow(R(), 2.2) * 75;
         const z = mz(x) + side * (hwAt(x) + bd);
         if (Math.abs(z) > 1150) continue;
         const h = H(x, z); if (h < 0.7) continue;
@@ -561,13 +620,24 @@ export function buildWorld(seed, Q) {
         if ((R() < pc) !== con) continue;
         const s = (0.75 + R() * 0.7) * (far ? 1.35 : 1);
         d.position.set(x, h, z); d.rotation.set((R() - 0.5) * 0.08, R() * 6.28, (R() - 0.5) * 0.08); d.scale.set(s, s * (0.85 + R() * 0.4), s);
-        return tint.setHSL(con ? 0.3 : 0.23 + R() * 0.06, 0.25 + R() * 0.2, 0.42 + R() * 0.12).multiplyScalar(2.1);
+        return ftint.setHSL(con ? 0.28 : 0.2 + R() * 0.06, 0.12 + R() * 0.12, 0.45 + R() * 0.1).multiplyScalar(2.1);
       }
       return null;
     };
-    const total = Q.forest + Q.far;
-    meshes.con = instanced(conA.build(), mat, Math.round(total * 0.55), placeF(true));
-    meshes.dec = instanced(decA.build(), mat, Math.round(total * 0.45), placeF(false));
+    // same placement stream for trunk + foliage of each kind: place once, copy matrices
+    const pair = (trunkGeo, folGeo, count, con, far) => {
+      const tm = instanced(trunkGeo, mat, count, placeF(con, far));
+      const fm = new THREE.InstancedMesh(folGeo, fmat, tm.count); fm.frustumCulled = false; fm.customDepthMaterial = FM.depth;
+      const m4 = new THREE.Matrix4(), cl = new THREE.Color();
+      for (let i = 0; i < tm.count; i++) { tm.getMatrixAt(i, m4); fm.setMatrixAt(i, m4); tm.getColorAt(i, cl); fm.setColorAt(i, cl); }
+      fm.instanceMatrix.needsUpdate = true; if (fm.instanceColor) fm.instanceColor.needsUpdate = true; group.add(fm);
+      return [tm, fm];
+    };
+    const ctB = conT.build(), dtB = decT.build();
+    meshes.con = pair(ctB, conNear, Math.round(Q.forest * 0.55), true, false);
+    meshes.dec = pair(dtB, decNear, Math.round(Q.forest * 0.45), false, false);
+    meshes.conF = pair(ctB, conFar, Math.round(Q.far * 0.55), true, true);
+    meshes.decF = pair(dtB, decFar, Math.round(Q.far * 0.45), false, true);
   }
 
   // ---------- water lilies in the calm water below the sand bar ----------

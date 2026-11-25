@@ -50,14 +50,15 @@ export function createLightning(scene, U) {
     const D = new THREE.Vector3().subVectors(b, a), L = D.length();
     for (let i = 1; i < n; i++) {
       const t = i / n, p = a.clone().addScaledVector(D, t);
-      p.x += (R() - 0.5) * L * 0.09; p.z += (R() - 0.5) * L * 0.09; p.y += (R() - 0.5) * L * 0.02;
+      p.x += (R() - 0.5) * L * 0.07; p.z += (R() - 0.5) * L * 0.07; p.y += (R() - 0.5) * L * 0.02;
       pts.push(p);
     }
     pts.push(b.clone());
+    let nb = 0;
     for (let i = 1; i < pts.length; i++) {
       seg(pts[i - 1], pts[i], w);
-      if (depth > 0 && R() < branchy && i < pts.length - 2) {
-        const rem = L * (1 - i / pts.length) * (0.25 + R() * 0.4);
+      if (depth > 0 && R() < branchy && i < pts.length * 0.6 && nb < 3) { nb++;
+        const rem = L * (1 - i / pts.length) * (0.12 + R() * 0.22);
         const bd = new THREE.Vector3((R() - 0.5) * 1.6, -0.55 - R() * 0.6, (R() - 0.5) * 1.6).normalize();
         path(pts[i], pts[i].clone().addScaledVector(bd, rem), w * 0.45, depth - 1, branchy * 0.55, R);
       }
@@ -70,12 +71,12 @@ export function createLightning(scene, U) {
       const a = fixA != null ? fixA : R() * Math.PI * 2; dist = 500 + R() * 1800;
       p = new THREE.Vector3(cam.x + Math.cos(a) * dist, 560 + R() * 140, cam.z + Math.sin(a) * dist);
       const q = p.clone().add(new THREE.Vector3((R() - 0.5) * 1400, -60 - R() * 120, (R() - 0.5) * 1400));
-      path(p, q, 3.5, 3, 0.5, R);
+      path(p, q, 3.5, 1, 0.25, R);
     } else {
       const a = fixA != null ? fixA : R() * Math.PI * 2; dist = kind === 'near' ? 260 + R() * 250 : 500 + R() * 2000;
       const gx = cam.x + Math.cos(a) * dist, gz = cam.z + Math.sin(a) * dist;
       const top = new THREE.Vector3(gx + (R() - 0.5) * 300, 620 + R() * 120, gz + (R() - 0.5) * 300);
-      path(top, new THREE.Vector3(gx, 0, gz), 3.2, 3, 0.45, R);
+      path(top, new THREE.Vector3(gx, 0, gz), 3.2, 1, 0.12, R);
       p = new THREE.Vector3(gx, 0, gz);
     }
     for (let i = nq * 4; i < MAXQ * 4; i++) { pos[i * 3 + 1] = -9999; }
