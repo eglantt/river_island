@@ -47,7 +47,7 @@ export function createSnakes(world, Q, scene) {
         float neck = smoothstep(0.0, 0.003, along) * (1.0 - smoothstep(0.024, 0.029, along)) * smoothstep(0.35, 0.6, abs(sin(a))) * smoothstep(-0.1, 0.25, -ca + 0.45) * (1.0 - belly);
         float blk = smoothstep(0.026, 0.03, along) * (1.0 - smoothstep(0.042, 0.048, along)) * smoothstep(0.05, 0.3, abs(sin(a))) * (1.0 - belly);
         col = mix(col, vec3(1.0, 0.8, 0.25), neck); col = mix(col, vec3(0.03, 0.03, 0.03), blk);
-        diffuseColor.rgb = mix(col, vec3(0.05, 0.11, 0.1), clamp(-vWp.y * 22.0, 0.0, 0.55));
+        diffuseColor.rgb = mix(col, vec3(0.04, 0.09, 0.085), clamp(-vWp.y * 3.0 + max(-vWp.y, 0.0) * 8.0, 0.0, 0.85));
       }`);
     };
     return m;
@@ -154,7 +154,7 @@ export function createSnakes(world, Q, scene) {
     snakes.push({
       bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: 0, wph: 0, amp: 0, swimAmp: 0.25,
       spd: 0, state: 'crawl', goal: null, stateT: 0, tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, flat: 0, hidden: 0, wet: 0, look: 0, curLook: 0, lookT: 0, splashed: false,
-      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined,
+      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), dep: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined, hdY: 0, dv: null, diveCD: 20 + R() * 30,
     });
   }
 
@@ -191,22 +191,22 @@ export function createSnakes(world, Q, scene) {
     }
     return pts;
   };
-  const pushTrail = (arr, x, z, minD, max) => {
+  const pushTrail = (arr, x, z, minD, max, y = 0) => {
     const l = arr[0];
-    if (!l || Math.hypot(x - l.x, z - l.z) > minD) { arr.unshift(new V(x, 0, z)); if (arr.length > max) arr.length = max; }
-    else { l.x = x; l.z = z; }
+    if (!l || Math.hypot(x - l.x, z - l.z) > minD) { arr.unshift(new V(x, y, z)); if (arr.length > max) arr.length = max; }
+    else { l.x = x; l.z = z; l.y = y; }
   };
   // sample a polyline (starting at p0, then arr[0..]) by arclength into out[]
-  const sampleTrail = (p0x, p0z, arr, ds, out) => {
-    let ti = -1, acc = 0, ax = p0x, az = p0z;
-    out[0].set(p0x, 0, p0z);
+  const sampleTrail = (p0x, p0z, arr, ds, out, p0y = 0) => {
+    let ti = -1, acc = 0, ax = p0x, az = p0z, ay = p0y;
+    out[0].set(p0x, p0y, p0z);
     for (let i = 1; i < out.length; i++) {
       const need = i * ds;
       for (;;) {
-        const b = arr[ti + 1]; if (!b) { const pv = out[i - 1], pp = out[Math.max(0, i - 2)]; out[i].set(pv.x + (pv.x - pp.x), 0, pv.z + (pv.z - pp.z)); break; }
+        const b = arr[ti + 1]; if (!b) { const pv = out[i - 1], pp = out[Math.max(0, i - 2)]; out[i].set(pv.x + (pv.x - pp.x), pv.y, pv.z + (pv.z - pp.z)); break; }
         const seg = Math.hypot(b.x - ax, b.z - az);
-        if (acc + seg >= need && seg > 1e-7) { const f = (need - acc) / seg; out[i].set(ax + (b.x - ax) * f, 0, az + (b.z - az) * f); break; }
-        acc += seg; ax = b.x; az = b.z; ti++;
+        if (acc + seg >= need && seg > 1e-7) { const f = (need - acc) / seg; out[i].set(ax + (b.x - ax) * f, ay + (b.y - ay) * f, az + (b.z - az) * f); break; }
+        acc += seg; ax = b.x; az = b.z; ay = b.y; ti++;
       }
     }
   };
@@ -265,13 +265,35 @@ export function createSnakes(world, Q, scene) {
       else if (s.state === 'pose') want = 0.1;
       else {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
-        want = s.state === 'flee' ? (inWater ? 0.6 : 0.45) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
+        want = s.state === 'flee' ? (inWater ? 0.69 : 0.56) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
         if (s.state === 'flee') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
         if (s.state === 'crawl' && !inWater && Math.sin(t * 0.21 + k * 2.1) > 0.88) want *= 0.03; // short pauses
         if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
         else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
       }
+      // ---- diving: down at ~30°, swim or lie on the bottom, come back up ----
+      const depthHere = -Hg(s.hd.x, s.hd.z);
+      s.diveCD -= dt;
+      if (!s.dv && inWater && s.wet > 0.8 && !wantHide && depthHere > 0.45 && (s.state === 'crawl' || s.state === 'flee')) {
+        if ((s.state === 'flee' && R() < 0.6 * dt * 3) || s.diveCD <= 0) {
+          const maxD = Math.min(0.5, depthHere - 0.05);
+          const bottom = depthHere < 0.75 && R() < 0.55;
+          s.dv = { ph: 'down', target: bottom ? -(depthHere - 0.04) : -maxD, t: 0, bottom };
+          env.ripple(s.hd.x, s.hd.z, 0.12); s.diveCD = 30 + R() * 30;
+        } else if (s.diveCD <= 0) s.diveCD = 5;
+      }
+      if (s.dv) {
+        const dv = s.dv, floorY = -Math.max(0, depthHere - 0.04); // head stays above the bottom
+        dv.t += dt;
+        if (wantHide || !inWater) dv.ph = 'up';
+        if (dv.ph === 'down') { s.hdY = Math.max(dv.target, floorY, s.hdY - Math.max(s.spd * dt * 0.6, dt * 0.02)); if (s.hdY <= Math.max(dv.target, floorY) + 0.005) { dv.ph = dv.bottom ? 'bottom' : 'under'; dv.t = 0; dv.dur = dv.bottom ? 5 + R() * 5 : 3 + R() * 6; } }
+        else if (dv.ph === 'bottom' || dv.ph === 'under') { s.hdY = Math.max(s.hdY, floorY); if (dv.t > dv.dur && (dv.ph === 'under' || true)) { dv.ph = 'up'; } }
+        else if (dv.ph === 'up') { s.hdY = Math.min(0, s.hdY + Math.max(s.spd * dt * 0.6, dt * 0.05)); if (s.hdY >= 0) { s.hdY = 0; s.dv = null; env.ripple(s.hd.x, s.hd.z, 0.1); } }
+        if (s.dv) { if (s.dv.ph === 'bottom') want = 0; else want *= 0.7; }
+      }
+      // short pauses on the water surface (the current then carries the snake)
+      if (inWater && !s.dv && s.state === 'crawl' && Math.sin(t * 0.17 + k * 1.3) > 0.9) want = 0;
       if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
       s.spd += (want - s.spd) * Math.min(1, dt * 2.5);
       s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
@@ -315,15 +337,30 @@ export function createSnakes(world, Q, scene) {
           const kk = Math.min(1, dt * 0.8); s.ax.x += (s.hd.x - s.ax.x) * kk; s.ax.z += (s.hd.z - s.ax.z) * kk;
           s.amp = Math.min(1, s.amp + step / (0.3 * s.L));
         }
-        pushTrail(s.trail, s.hd.x, s.hd.z, 0.006, 500);
+        pushTrail(s.trail, s.hd.x, s.hd.z, 0.006, 500, s.hdY);
         pushTrail(s.axTrail, s.ax.x, s.ax.z, 0.01, 260);
         // swimming wave travels backward ~1.6x faster than the snake moves forward
         s.wph += (2 * Math.PI / (0.6 * s.L)) * step * 1.6 + dt * 1.5 * s.wet;
       }
       s.swimAmp += ((s.wet > 0.4 && s.spd > 0.03 ? 1 : 0.25) - s.swimAmp) * Math.min(1, dt * 1.5);
+      // ---- drift with the current when floating still: the whole body moves, slowly turning head-upstream ----
+      if (inWater && s.spd < 0.05 && !(s.dv && s.dv.ph === 'bottom')) {
+        const sl = (mz(s.hd.x + 1) - mz(s.hd.x - 1)) / 2, fl = Math.hypot(1, sl), cv = (0.04 + 0.03 * Math.min(1, depthHere / 1.2)) * (1 - s.spd / 0.05);
+        const fx = 1 / fl * cv * dt, fz = sl / fl * cv * dt;
+        const nxh = s.hd.x + fx, nzh = s.hd.z + fz;
+        if (Hg(nxh, nzh) < -0.15 && (s.bank ? Math.abs(nxh - bankX) < 25 : islandE(nxh, nzh) < 1.45)) {
+          // slow turn toward upstream around the middle of the body
+          const up = Math.atan2(-sl, -1), d = Math.atan2(Math.sin(up - s.axTh), Math.cos(up - s.axTh)), rot = Math.max(-0.08, Math.min(0.08, d)) * dt;
+          const mid = s.trail[Math.min(s.trail.length - 1, 60)] || s.hd, cx = mid.x, cz = mid.z, c = Math.cos(rot), sn = Math.sin(rot);
+          const mv = (p) => { const x = p.x - cx, z = p.z - cz; p.x = cx + x * c - z * sn + fx; p.z = cz + x * sn + z * c + fz; };
+          mv(s.hd); mv(s.ax); for (const p of s.trail) mv(p); for (const p of s.axTrail) mv(p);
+          s.axTh += rot; s.th += rot;
+        }
+      }
       // ---- body ----
       const ds = s.L / (NODES - 1);
-      sampleTrail(s.hd.x, s.hd.z, s.trail, ds, Pn);
+      sampleTrail(s.hd.x, s.hd.z, s.trail, ds, Pn, s.hdY);
+      for (let i = 0; i < NODES; i++) s.dep[i] = Pn[i].y;
       // heights: on the visible ground, floating at the surface in water; head + neck raised
       const alert = s.state === 'bask' ? 0.3 + 0.5 * Math.max(0, Math.sin(t * 0.13 + k * 1.7)) : s.state === 'flee' ? 0.6 : 0.25;
       s.lift += ((s.wet > 0.5 ? 0.45 : alert) - s.lift) * Math.min(1, dt * 2);
@@ -331,8 +368,9 @@ export function createSnakes(world, Q, scene) {
       for (let i = 0; i < NODES; i++) {
         const u = i / (NODES - 1), r = radius(s, u) * fl;
         const g = Hg(Pn[i].x, Pn[i].z);
-        let y = Math.max(g + r * 0.95 + 0.002, r * 0.75 + 0.002);
-        const hl = Math.max(0, 1 - i / 7); y += hl * hl * (0.006 + 0.02 * s.lift);
+        const dp = s.dep[i]; // <0: under water (dive)
+        let y = Math.max(g + r * 0.95 + 0.002, r * 0.75 + 0.002 + dp);
+        const hl = Math.max(0, 1 - i / 7); y += hl * hl * (0.006 + 0.02 * s.lift) * sm(-0.06, -0.005, dp);
         Pn[i].y = y - sinkH;
       }
       // where the body crosses itself, the part nearer the head lies on top
@@ -384,12 +422,12 @@ export function createSnakes(world, Q, scene) {
         let cx = 0, cz = 0; for (let q = 0; q < 16; q++) { cx += snkU[base + q].x; cz += snkU[base + q].y; } cx /= 16; cz /= 16;
         let rad = 0; for (let q = 0; q < 16; q++) rad = Math.max(rad, Math.hypot(snkU[base + q].x - cx, snkU[base + q].y - cz));
         for (let q = 0; q < 8; q++) { const e = snkU[base + 16 + q], age = (t % 3600) - e.z; if (age >= 0 && age < 3.2) rad = Math.max(rad, Math.hypot(e.x - cx, e.y - cz) + 0.03 + 0.3 * age); }
-        snkB[k].set(cx, cz, rad + 0.05, Math.min(1, s.spd / 0.3) * sm(0.3, 0.8, s.wet));
+        snkB[k].set(cx, cz, rad + 0.05, Math.min(1, s.spd / 0.3) * sm(0.3, 0.8, s.wet) * sm(-0.05, -0.01, s.hdY));
       } else snkB[k].set(0, 0, 0, 0);
       // a loop apex is passed each time the wave phase crosses a multiple of pi
       const apex = Math.floor(s.wph0 / Math.PI);
       if (apex !== s.lastApex) {
-        if (s.lastApex !== undefined && inW && s.wet > 0.5 && s.spd > 0.05) {
+        if (s.lastApex !== undefined && inW && s.wet > 0.5 && s.spd > 0.05 && s.hdY > -0.02) {
           const outA = s.axTh + (apex % 2 === 0 ? -Math.PI / 2 : Math.PI / 2);
           snkU[base + 16 + s.emi].set(s.hd.x, s.hd.z, t % 3600, outA); s.emi = (s.emi + 1) % 8;
         }
