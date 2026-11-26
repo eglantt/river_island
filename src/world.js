@@ -140,12 +140,13 @@ export function buildWorld(seed, Q) {
   const tp = tg.attributes.position, cols = new Float32Array(tp.count * 3);
   const cSand = C('#b7a27a'), cWet = C('#6e6146'), cBed = C('#4d4a35'), cBedDeep = C('#2f3a2b'), cGrass = C('#5f8f3a'), cGrass2 = C('#86a043'), cGrass3 = C('#4a7a30'), cDirt = C('#735f42'), cForest = C('#2f4a24'), cMoss = C('#3e5e2c');
   const tmp = new THREE.Color();
+  const sbE = (x, z) => { const [cx, cz] = sbC(), dx = (x - cx) / sbL, dz = (z - cz) / sbW; return dx * dx + dz * dz + 0.15 * N.n2(x * 0.08, z * 0.08); };
   const terrainColor = (x, z, h) => {
     const sl = Math.min(1, (Math.abs(H(x + 1, z) - h) + Math.abs(H(x, z + 1) - h)) * 0.9);
     const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z);
     if (h < -1.2) tmp.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h));
     else if (h < -0.15) tmp.copy(cWet).lerp(cBed, sm(-0.15, -1.2, h));
-    else if (h < 0.32 + nz * 0.12) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h));
+    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
     else {
       tmp.copy(cGrass).lerp(nz > 0 ? cGrass2 : cGrass3, Math.abs(nz) * 0.8);
       tmp.lerp(cDirt, sm(0.35, 0.8, sl) * 0.8);
@@ -728,6 +729,21 @@ export function buildWorld(seed, Q) {
       return null;
     });
     meshes.grass.receiveShadow = !!Q.shadows;
+    // sparse tussocks on the sand bar, in irregular patches shaped by noise
+    { const [cx, cz] = sbC(); let cl = null, left = 0;
+      const ok = (x, z) => { const h = H(x, z), e = sbE(x, z); return h > 0.1 && e < 1.4 && N.n2(x * 0.16 + 5.3, z * 0.16) * 0.8 + 0.45 * N.n2(x * 0.55, z * 0.55 + 2) - 0.6 * e > -0.3; };
+      meshes.sbGrass = instanced(g, mat, Math.round(Q.grass * 0.07), (d) => {
+        for (let t = 0; t < 30; t++) {
+          if (!cl || left <= 0) { const x = cx + (R() - 0.5) * sbL * 2.2, z = cz + (R() - 0.5) * sbW * 2.2; if (!ok(x, z)) continue; cl = [x, z]; left = 8 + Math.floor(R() * 14); }
+          const a = R() * 6.28, rr = Math.sqrt(R()) * 0.22, x = cl[0] + Math.cos(a) * rr, z = cl[1] + Math.sin(a) * rr; left--;
+          if (!ok(x, z)) continue;
+          d.position.set(x, H(x, z) - 0.03, z); d.rotation.set((R() - 0.5) * 0.3, R() * 6.28, (R() - 0.5) * 0.3);
+          d.scale.set(0.8 + R() * 0.6, (0.28 + R() * 0.4) * (1 - rr * 1.8), 1);
+          return tint.setHSL(0.17 + R() * 0.05, 0.42, 0.42 + R() * 0.14).multiplyScalar(2.2);
+        }
+        return null;
+      });
+    }
   }
   // flowers
   const flowerPts = [];

@@ -7,13 +7,13 @@ import { U } from './shaders.js';
 import { noiseTextureData, waterNormalData } from './noise.js';
 import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
-import { createAudio, testThunder, testCrackle, testFrogs } from './audio.js';
+import { createAudio, testThunder, testCrackle, testFrogs, testMix } from './audio.js';
 import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.32 alpha';
+const VERSION = '0.0.33 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -95,6 +95,13 @@ let curve = null, flyU = 0;
 function build() {
   if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); snakes.dispose(); camp.dispose(); }
   world = buildWorld(S.seed, Q); world.bakeImpostors(renderer); scene.add(world.group);
+  { // frogs live at the lily pads and in the reeds near the island
+    const pts = [], m4 = new THREE.Matrix4(), pads = world.meshes.pads;
+    if (pads) for (let i = 0; i < pads.count && pts.length < 3; i += Math.max(1, Math.floor(pads.count / 3))) { pads.getMatrixAt(i, m4); pts.push([m4.elements[12], m4.elements[14]]); }
+    const rp = world.reedPts.slice().sort((a, b) => Math.hypot(a.x, a.z - world.zc0) - Math.hypot(b.x, b.z - world.zc0));
+    for (let i = 0; i < rp.length && pts.length < 7; i += 3) pts.push([rp[i].x, rp[i].z]);
+    audio.setFrogs(pts);
+  }
   fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene); snakes = createSnakes(world, Q, scene);
   camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
   U.uCampA.value.set(camp.tentP.x, camp.tentP.z, camp.fireP.x, camp.fireP.z); U.uCampB.value.set(Math.cos(camp.yaw), Math.sin(camp.yaw), camp.halfW, camp.halfL);
@@ -201,6 +208,8 @@ function dirFor(h, maxEl) {
   return new THREE.Vector3(Math.cos(phi) * Math.cos(el), Math.sin(el), -Math.sin(phi) * Math.cos(el));
 }
 let env = {};
+// frog chorus by the clock of the island: starts 19:30, full 21:00-04:00, fades out by 06:00
+const frogNight = (h) => (h >= 12 ? sm(19.5, 21, h) : 1 - sm(4, 6, h));
 function updateEnv(dt) {
   const h = S.hour;
   const sd = dirFor(h, 0.98), el = Math.asin(sd.y) * 57.3;
@@ -478,7 +487,7 @@ function frame(now) {
     if (camp.state && S.camp) { const d = camera.position.distanceTo(camp.fireP); audio.fireSound(Math.max(camp.state.fire, camp.state.out ? 0.15 : 0) * clamp(1 - d / 22, 0, 1) ** 1.5, W.rain); } else audio.fireSound(0, 0);
     audio.update(dt, { volume: S.volume, wind: windS, gust: 0.5 + 0.5 * Math.sin(gameTime * 0.37) * Math.sin(gameTime * 0.11), water: nearW, rain: W.rain,
       birds: (sm(4.5, 6, env.h) * (1 - sm(8.5, 10, env.h)) * 0.9 + 0.3 * env.day + 0.15 * sm(18.5, 19.5, env.h) * (1 - sm(20.5, 21.5, env.h))) * (1 - sm(0.2, 0.6, W.rain)),
-      crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: (0.8 * sm(2, -6, env.el) + 0.15 * env.day * (1 - W.cover * 0.6) + 0.25 * U.uWet.value * (1 - W.rain)) * (1 - W.storm * 0.8) * (1 - sm(0.5, 1, W.rain) * 0.6), owl: sm(-6, -12, env.el) * env.dry,
+      crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: frogNight(env.h) * (1 - W.storm * 0.8) * (1 - sm(0.5, 1, W.rain) * 0.6), frogDay: (1 - frogNight(env.h)) * env.day * (0.6 * (1 - W.cover * 0.6) + 0.5 * U.uWet.value) * (1 - W.rain) * (1 - W.storm), lis: { x: camera.position.x, z: camera.position.z, yaw: P.yaw }, owl: sm(-6, -12, env.el) * env.dry,
       buzz: nd.p ? clamp(1 - nd.d / 2.8, 0, 1) : 0, buzzPan: pan });
   }
   autoQuality(dt);
@@ -505,6 +514,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, get snakes() { return snakes; }, testThunder, testCrackle, testFrogs, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, get snakes() { return snakes; }, testThunder, testCrackle, testFrogs, testMix, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

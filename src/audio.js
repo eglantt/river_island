@@ -133,6 +133,20 @@ export async function testFrogs(sec = 20) {
   const b = await c.startRendering(); return [Array.from(b.getChannelData(0)), Array.from(b.getChannelData(1))];
 }
 
+// night mix near the water for listening tests: river + wind + frog chorus at 3-15 m, same levels as in the scene
+export async function testMix(sec = 20, fk = 1, noise = 1) {
+  const sr = 44100, c = new OfflineAudioContext(2, sr * sec, sr), R = Math.random;
+  const master = c.createGain(); master.gain.value = 0.7;
+  const lim = c.createDynamicsCompressor(); lim.threshold.value = -6; lim.knee.value = 6; lim.ratio.value = 12; lim.attack.value = 0.003; lim.release.value = 0.25;
+  master.connect(lim); lim.connect(c.destination);
+  const nb = c.createBuffer(1, sr * 3, sr), d = nb.getChannelData(0); let b = 0; for (let i = 0; i < d.length; i++) { const w = R() * 2 - 1; b = 0.985 * b + 0.15 * w; d[i] = w * 0.5 + b * 0.5; }
+  const loop = (filters, vol) => { const s = c.createBufferSource(); s.buffer = nb; s.loop = true; let n = s; for (const [t, f, q] of filters) { const fl = c.createBiquadFilter(); fl.type = t; fl.frequency.value = f; fl.Q.value = q; n.connect(fl); n = fl; } const g = c.createGain(); g.gain.value = vol; n.connect(g); g.connect(master); s.start(); };
+  loop([['lowpass', 900, 0.7], ['peaking', 520, 3]], 0.32 * noise); loop([['bandpass', 1400, 4]], 0.05 * noise); loop([['bandpass', 380, 0.6]], 0.06 * noise);
+  const frogs = Array.from({ length: 6 }, (_, i) => ({ d: 3 + i * 2.4, pan: R() * 1.6 - 0.8, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 }));
+  for (let t = 0.3; t < sec - 2; t += 0.7 + R() * 1.4) { const fr = frogs[Math.floor(R() * 6)], p = c.createStereoPanner(); p.pan.value = fr.pan; p.connect(master); frogCall(c, p, fr, fk * 1.2 / (1 + Math.pow((fr.d + 0.5) / 7, 1.6)), t); }
+  const r = await c.startRendering(); return [Array.from(r.getChannelData(0)), Array.from(r.getChannelData(1))];
+}
+
 // Fully synthesized ambience: wind, leaves, river, rain, birds, crickets, frogs, owl, splash, thunder, dragonfly buzz
 export function createAudio() {
   let ac = null, master, noiseBuf, ch = {}, nextBird = 0, nextCricket = 0, nextFrog = 0, nextOwl = 0, buzz = null;
@@ -184,8 +198,16 @@ export function createAudio() {
   }
   // marsh frog (Pelophylax ridibundus): "laughing" series of 5-14 croaks, each a buzzy glottal pulse train
   // shaped by two formants; every frog has its own pitch, tempo, place (pan) and distance
-  const frogs = Array.from({ length: 6 }, () => ({ pan: R() * 1.8 - 0.9, dist: 0.3 + R() * 0.7, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 }));
-  let chorusUntil = 0, quietUntil = 0;
+  // frogs sit at fixed places at the water (set from the world); pan and loudness come from the listener position
+  let frogs = Array.from({ length: 6 }, () => ({ x: 0, z: 0, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 }));
+  let chorusUntil = 0, quietUntil = 0, lis = { x: 0, z: 0, yaw: 0 };
+  function setFrogs(pts) { frogs = pts.map(([x, z]) => ({ x, z, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 })); }
+  const frogAt = (fr, vol) => {
+    const dx = fr.x - lis.x, dz = fr.z - lis.z, d = Math.hypot(dx, dz) + 0.5;
+    const rx = Math.cos(lis.yaw), rz = -Math.sin(lis.yaw), pan = Math.max(-0.9, Math.min(0.9, (dx * rx + dz * rz) / d));
+    const g = 1 / (1 + Math.pow(d / 7, 1.6));
+    const out = panner(pan); frogCall(ac, out, fr, vol * g, ac.currentTime + 0.02);
+  };
   function frog(fr, vol) { const out = panner(fr.pan); frogCall(ac, out, fr, vol, ac.currentTime + 0.02); }
   function owl(vol) {
     const t0 = ac.currentTime, out = panner(R() * 1.2 - 0.6);
@@ -217,18 +239,22 @@ export function createAudio() {
     const now = ac.currentTime;
     if (now > nextBird) { if (s.birds > 0.05 && R() < s.birds) chirp(0.05 + 0.05 * s.birds); nextBird = now + (0.6 + R() * 4) / (0.3 + s.birds); }
     if (now > nextCricket) { if (s.crickets > 0.05) cricket(0.012 * s.crickets); nextCricket = now + 0.8 + R() * 1.5 / (0.2 + s.crickets); }
-    if (now > nextFrog) {
-      // chorus: one frog starts, others answer; long silences between bouts
+    if (s.lis) lis = s.lis;
+    if (now > nextFrog && frogs.length) {
+      // night: chorus — one frog starts, others answer; silences between bouts. Day: rare single voices.
+      const pick = () => frogs[Math.floor(R() * frogs.length)];
       if (s.frogs > 0.05 && now > quietUntil) {
-        const loud = s.frogs * (0.35 + 0.65 * s.water);
-        if (now > chorusUntil && R() < 0.35) chorusUntil = now + 6 + R() * 18 * s.frogs;
+        if (now > chorusUntil && R() < 0.4) chorusUntil = now + 8 + R() * 20 * s.frogs;
         const inChorus = now < chorusUntil;
         if (inChorus || R() < s.frogs * 0.5) {
-          const fr = frogs[Math.floor(R() * frogs.length)]; frog(fr, 0.07 * loud * fr.dist);
-          if (inChorus && R() < 0.6) { const f2 = frogs[Math.floor(R() * frogs.length)]; setTimeout(() => { if (ac) frog(f2, 0.07 * loud * f2.dist); }, 250 + R() * 900); }
+          frogAt(pick(), 1.2 * s.frogs);
+          if (inChorus && R() < 0.65) { const f2 = pick(); setTimeout(() => { if (ac) frogAt(f2, 1.2 * s.frogs); }, 250 + R() * 900); }
         }
-        if (!inChorus && R() < 0.15) quietUntil = now + 8 + R() * 20;
-        nextFrog = now + (inChorus ? 0.8 + R() * 1.6 : 2.5 + R() * 6);
+        if (!inChorus && R() < 0.12) quietUntil = now + 6 + R() * 14;
+        nextFrog = now + (inChorus ? 0.7 + R() * 1.4 : 2 + R() * 5);
+      } else if (s.frogDay > 0.05) {
+        frogAt(pick(), 0.6 * s.frogDay); if (R() < 0.4) { const f2 = pick(); setTimeout(() => { if (ac) frogAt(f2, 0.5 * s.frogDay); }, 600 + R() * 1200); }
+        nextFrog = now + 20 + R() * 20;
       } else nextFrog = now + 1;
     }
     if (now > nextOwl) { if (s.owl > 0.3 && R() < 0.5) owl(0.05); nextOwl = now + 12 + R() * 25; }
@@ -258,5 +284,5 @@ export function createAudio() {
     else fireSt.next = now + 0.2;
   }
   function suspend(v) { if (!ac) return; v ? ac.suspend() : ac.resume(); }
-  return { init, update, splash, thunder, step, fireSound, suspend, get on() { return !!ac; } };
+  return { init, update, splash, thunder, step, fireSound, suspend, setFrogs, get on() { return !!ac; } };
 }
