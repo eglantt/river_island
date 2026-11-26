@@ -66,7 +66,25 @@ export function createFauna(world, Q, scene) {
   const birdMat = new THREE.MeshBasicMaterial({ color: '#25242a', side: THREE.DoubleSide });
   const birds = new THREE.InstancedMesh(bg, birdMat, NBird * 2); birds.frustumCulled = false; group.add(birds);
   // a lone gull gliding low along the river now and then
-  const gullM = new THREE.InstancedMesh(bg, new THREE.MeshLambertMaterial({ color: '#e8e6e0', side: THREE.DoubleSide }), 2); gullM.frustumCulled = false; group.add(gullM);
+  const gull = new THREE.Group(); group.add(gull);
+  {
+    const white = new THREE.MeshLambertMaterial({ color: '#eeece6' }), grey = new THREE.MeshLambertMaterial({ color: '#9aa0a6', side: THREE.DoubleSide }), tipM = new THREE.MeshLambertMaterial({ color: '#1e1e20', side: THREE.DoubleSide }), beakM = new THREE.MeshLambertMaterial({ color: '#e2b33a' });
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 7).scale(2.6, 0.85, 0.9), white); gull.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 7).scale(1.3, 1, 0.95), white); head.position.set(0.33, 0.05, 0); gull.add(head);
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.09, 6).rotateZ(-Math.PI / 2), beakM); beak.position.set(0.44, 0.04, 0); gull.add(beak);
+    const tail = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-0.26, 0.02, 0, -0.46, 0.03, 0.1, -0.46, 0.03, -0.1], 3)), white); tail.geometry.computeVertexNormals(); tail.material = grey; gull.add(tail);
+    const wingPart = (len, w0, w1, sweep, sd) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, -w0, 0, 0, -sweep - w1, 0, len * sd, 0, 0, 0, -sweep - w1, 0, len * sd, -sweep, 0, len * sd], 3)); g.computeVertexNormals(); return g; };
+    gull.userData.w = [];
+    for (const side of [1, -1]) {
+      const sh = new THREE.Group(); sh.position.set(0.06, 0.04, side * 0.07); gull.add(sh);
+      sh.add(new THREE.Mesh(wingPart(0.42, 0.16, 0.12, 0.02, side), grey));
+      const el = new THREE.Group(); el.position.set(-0.02, 0, 0.42 * side); sh.add(el);
+      el.add(new THREE.Mesh(wingPart(0.4, 0.12, 0.05, 0.12, side), grey));
+      const tp = new THREE.Mesh(wingPart(0.12, 0.05, 0.02, 0.05, side), tipM); tp.position.set(-0.12, 0.001, 0.36 * side); el.add(tp);
+      gull.userData.w.push([sh, el, side]);
+    }
+    gull.scale.setScalar(1.6); gull.visible = false;
+  }
   let gullT = 20 + R() * 30, gullDir = 1;
   const bd = Array.from({ length: NBird }, (_, i) => ({ off: new V((R() - 0.5) * 26, (R() - 0.5) * 8, (R() - 0.5) * 26), ph: R() * 10, p: new V(), prev: new V() }));
 
@@ -175,9 +193,9 @@ export function createFauna(world, Q, scene) {
     const gx = gullDir * (-320 + 640 * Math.max(0, gu)), gs = gu >= 0 && gu < 1 && env.birds > 0.3 ? 1.1 : 1e-4;
     const gp = new V(gx, 9 + Math.sin(t * 0.6) * 3, mz(gx) + Math.sin(t * 0.21) * 12), gnx = gx + gullDir;
     const gyaw = Math.atan2(-(mz(gnx) - mz(gx)), gullDir);
-    const gfl = Math.sin(t * 0.7) > 0.3 ? Math.sin(t * 7) * 0.6 : 0.12;
-    setWing(gullM, 0, gp, gyaw, 0, 1, gfl, gs); setWing(gullM, 1, gp, gyaw, 0, -1, gfl, gs);
-    gullM.instanceMatrix.needsUpdate = true;
+    const flapping = Math.sin(t * 0.7) > 0.3, ph = Math.sin(t * 6.5);
+    gull.visible = gs > 0.01; gull.position.copy(gp); gull.rotation.set(0, gyaw, Math.sin(t * 0.4) * 0.15, 'YXZ');
+    for (const [sh, el, sd] of gull.userData.w) { sh.rotation.x = -sd * (flapping ? ph * 0.5 : 0.12); el.rotation.x = sd * (flapping ? 0.1 + ph * 0.3 : 0.22); }
 
     // fish
     if (jump) {

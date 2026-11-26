@@ -78,7 +78,10 @@ export function patch(mat, key, amp = 0, defs = {}) {
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
     sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
-      sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      sh.fragmentShader.replace('#include <alphatest_fragment>', `#ifdef CARD
+        { vec3 fn = normalize(cross(dFdx(vWp), dFdy(vWp))); vec3 vd = normalize(cameraPosition - vWp); diffuseColor.a *= smoothstep(0.06, 0.32, abs(dot(fn, vd))); }
+      #endif
+      #include <alphatest_fragment>`).replace('#include <color_fragment>', `#include <color_fragment>
       #ifdef DETAIL
         {
           // exposed earth with strata on steep banks (cliff)

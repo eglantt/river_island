@@ -12,7 +12,7 @@ import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.14';
+const VERSION = '0.0.15';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -21,9 +21,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 50, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, algae: 1300, bankBush: 50 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 70, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, algae: 2400, bankBush: 80 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 90, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, algae: 3600, bankBush: 110 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 50, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, leaves: 2400, leafMode: 'leaves', algae: 2000, bankBush: 50 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 70, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, leaves: 5000, leafMode: 'leaves', algae: 3600, bankBush: 80 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 90, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, leaves: 10000, leafMode: 'leaves', algae: 5500, bankBush: 110 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -124,7 +124,7 @@ const walkable = (x, z) => world.H(x, z) > 0.08 && world.islandE(x, z) < 1.25 &&
 // ---------- input ----------
 const keys = {}; let joy = null, look = null, rjoy = null; const jv = { x: 0, y: 0 }, rv = { x: 0, y: 0 }; let lookDX = 0, lookDY = 0, jumpReq = false;
 const rstickEl = $('rstick'), rknob = $('rknob'), jumpEl = $('jump');
-let ctlLast = 0; const ctlTouch = () => { ctlLast = performance.now(); };
+let ctlLast = 0, upId = null; const ctlTouch = () => { ctlLast = performance.now(); };
 const showEl = (el, x, y) => { el.style.left = x + 'px'; el.style.top = y + 'px'; el.classList.add('vis'); };
 const onJumpBtn = (x, y) => { if (!jumpEl.classList.contains('vis')) return false; const b = jumpEl.getBoundingClientRect(); return Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)) < b.width * 0.7; };
 addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT') return; keys[e.code] = true; if (e.code === 'Space' && started) { jumpReq = true; e.preventDefault(); } if (e.code === 'Escape' && photo) setPhoto(false); });
@@ -135,6 +135,7 @@ pad.addEventListener('pointerdown', (e) => {
   if (!started) return; closePanel();
   try { pad.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
   if (e.pointerType !== 'mouse') ctlTouch();
+  if (freeCam && e.pointerType !== 'mouse' && touchUI()) { const db = $('down').getBoundingClientRect(); if (onJumpBtn(e.clientX, e.clientY)) { upHeld = 1; upId = e.pointerId; return; } if ($('down').classList.contains('vis') && Math.hypot(e.clientX - db.left - 36, e.clientY - db.top - 36) < 50) { upHeld = -1; upId = e.pointerId; return; } }
   if (e.pointerType !== 'mouse' && touchUI() && onJumpBtn(e.clientX, e.clientY)) { jumpReq = true; jumpEl.classList.add('down'); setTimeout(() => jumpEl.classList.remove('down'), 150); return; }
   if (e.pointerType !== 'mouse' && touchUI() && !rjoy && e.clientX >= innerWidth * 0.5 && e.clientY > innerHeight * 0.5) {
     // right joystick appears under the finger, jump button just below it (or to its left near the bottom edge)
@@ -143,30 +144,37 @@ pad.addEventListener('pointerdown', (e) => {
     showEl(rstickEl, cx - r, cy - r);
     const below = cy + r + 14 + 72 < innerHeight - 6;
     showEl(jumpEl, below ? cx - 36 : cx - r - 14 - 72, below ? cy + r + 14 : cy - 36);
+    if (freeCam) { const jb = jumpEl.getBoundingClientRect(); showEl($('down'), jb.left - 84, jb.top); }
     return;
   }
-  if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && !joy && S.mode === 'walk') {
+  if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && !joy && (S.mode === 'walk' || freeCam)) {
     joy = { id: e.pointerId, x: e.clientX, y: e.clientY }; showEl(stick, e.clientX - 60, e.clientY - 60);
-  } else if (!look) look = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  } else if (e.pointerType === 'mouse' && !coarse && !locked() && pad.requestPointerLock) {
+    try { const r = pad.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (_) { /* not allowed here */ }
+    if (!look) look = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  } else if (!look && !locked()) look = { id: e.pointerId, x: e.clientX, y: e.clientY };
 });
+const locked = () => document.pointerLockElement === pad;
+document.addEventListener('mousemove', (e) => { if (locked()) { lookDX += e.movementX || 0; lookDY += e.movementY || 0; } });
 pad.addEventListener('pointermove', (e) => {
   if (joy && e.pointerId === joy.id) {
     let dx = e.clientX - joy.x, dy = e.clientY - joy.y; const l = Math.hypot(dx, dy), r = 46; if (l > r) { dx *= r / l; dy *= r / l; }
     jv.x = dx / r; jv.y = dy / r; knob.style.transform = `translate(${dx}px,${dy}px)`;
   }
-  if (look && e.pointerId === look.id) { lookDX += e.clientX - look.x; lookDY += e.clientY - look.y; look.x = e.clientX; look.y = e.clientY; }
+  if (look && e.pointerId === look.id && !locked()) { lookDX += e.clientX - look.x; lookDY += e.clientY - look.y; look.x = e.clientX; look.y = e.clientY; }
   if (rjoy && e.pointerId === rjoy.id) {
     let dx = e.clientX - rjoy.x, dy = e.clientY - rjoy.y; const l = Math.hypot(dx, dy), r = rjoy.r * 0.75; if (l > r) { dx *= r / l; dy *= r / l; }
     rv.x = dx / r; rv.y = dy / r; rknob.style.transform = `translate(${dx}px,${dy}px)`;
   }
 });
 const up = (e) => {
+  if (e.pointerId === upId) { upHeld = 0; upId = null; }
   if (e.pointerType !== 'mouse') ctlTouch();
   if (joy && e.pointerId === joy.id) { joy = null; jv.x = jv.y = 0; knob.style.transform = ''; }
   if (look && e.pointerId === look.id) look = null;
   if (rjoy && e.pointerId === rjoy.id) { rjoy = null; rv.x = rv.y = 0; rknob.style.transform = ''; }
 };
-const touchUI = () => coarse && started && S.mode === 'walk' && !photo;
+const touchUI = () => coarse && started && (S.mode === 'walk' || freeCam) && !photo;
 pad.addEventListener('pointerup', up); pad.addEventListener('pointercancel', up);
 
 // ---------- environment state ----------
@@ -301,7 +309,20 @@ function surface() {
   if (h < 0.42) return 'sand';
   return 'grass';
 }
+let freeCam = false; const FC = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 }; let upHeld = 0;
 function updatePlayer(dt) {
+  if (freeCam) {
+    FC.yaw -= lookDX * (coarse ? 0.0055 : 0.0035) + rv.x * Math.abs(rv.x) * dt * 2.4; FC.pitch = clamp(FC.pitch - lookDY * (coarse ? 0.0045 : 0.003) - rv.y * Math.abs(rv.y) * dt * 1.6, -1.5, 1.5); lookDX = lookDY = 0;
+    let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - jv.y, s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + jv.x;
+    const u = (keys.KeyE || keys.Space ? 1 : 0) - (keys.KeyQ || keys.KeyC ? 1 : 0) + upHeld;
+    const sp = (keys.ShiftLeft || keys.ShiftRight ? 120 : 18) * (1 + Math.max(0, FC.pos.y - 30) / 120);
+    const cp = Math.cos(FC.pitch);
+    fwd.set(-Math.sin(FC.yaw) * cp, Math.sin(FC.pitch), -Math.cos(FC.yaw) * cp); right.set(Math.cos(FC.yaw), 0, -Math.sin(FC.yaw));
+    FC.pos.addScaledVector(fwd, f * sp * dt).addScaledVector(right, s * sp * dt); FC.pos.y += u * sp * dt;
+    const r = Math.hypot(FC.pos.x, FC.pos.z), gnd = r < 1150 ? Math.max(world.H(FC.pos.x, FC.pos.z), 0) : (r < 5600 ? world.mh(r, Math.atan2(FC.pos.z, FC.pos.x)) : 0);
+    FC.pos.y = Math.max(FC.pos.y, gnd + 0.8);
+    camera.position.copy(FC.pos); camera.rotation.set(FC.pitch, FC.yaw, 0, 'YXZ'); return;
+  }
   if (S.mode === 'fly') {
     flyU = (flyU + dt / 75) % 1;
     const p = curve.getPointAt(flyU), q = curve.getPointAt((flyU + 0.02) % 1);
@@ -364,7 +385,17 @@ $('wind').addEventListener('input', (e) => { S.wind = +e.target.value; save(); }
 $('vol').addEventListener('input', (e) => { S.volume = +e.target.value; save(); });
 $('showclock').addEventListener('change', (e) => { S.clock = e.target.checked; save(); });
 $('showfps').addEventListener('change', (e) => { S.fps = e.target.checked; save(); });
-$('mode').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.mode = v; save(); syncUI(); if (v === 'walk') camera.position.copy(P.pos); });
+let camTaps = [];
+$('camhead').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); const now = performance.now(); camTaps = camTaps.filter((t) => now - t < 2000); camTaps.push(now);
+  if (camTaps.length >= 10 && (S.mode === 'fly' || freeCam)) {
+    camTaps = []; freeCam = !freeCam;
+    if (freeCam) { FC.pos.copy(camera.position); const eu = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ'); FC.yaw = eu.y; FC.pitch = eu.x; }
+    document.body.classList.toggle('freecam', freeCam);
+    $('snapmsg').textContent = freeCam ? 'Свободная камера' : 'Свободная камера выключена'; $('snapmsg').classList.add('on'); setTimeout(() => { $('snapmsg').classList.remove('on'); $('snapmsg').textContent = 'Снимок сохранён'; }, 1800);
+  }
+});
+$('mode').addEventListener('click', (e) => { const v = e.target.dataset && e.target.dataset.v; if (!v) return; if (freeCam) { freeCam = false; document.body.classList.remove('freecam'); } S.mode = v; save(); syncUI(); if (v === 'walk') camera.position.copy(P.pos); });
 $('qual').addEventListener('click', (e) => {
   const v = e.target.dataset && e.target.dataset.v; if (!v) return; S.quality = v; save();
   const nk = v === 'auto' ? (coarse ? 'med' : 'high') : v; autoDone = v !== 'auto';
@@ -430,7 +461,7 @@ function frame(now) {
     if (S.auto) { autoClock += (S.hour - prev + 24) % 24; if (autoClock > nextAuto) { autoClock = 0; nextAuto = 2 + Math.random() * 3.5; const opts = NEXT[S.weather]; let n = opts[Math.floor(Math.random() * opts.length)]; if (n === 'fog' && !(S.hour > 3 && S.hour < 9)) n = 'overcast'; S.weather = n; weatherRate = 1 / 40; if (!panel.hidden) syncUI(); } }
   }
   if (window.__island && window.__island.freeze) { /* debug camera */ }
-  else if (started || S.mode === 'fly') updatePlayer(dt); else { P.yaw += dt * 0.03; camera.position.copy(P.pos); camera.rotation.set(0.03, P.yaw, 0, 'YXZ'); }
+  else if (started || S.mode === 'fly' || freeCam) updatePlayer(dt); else { P.yaw += dt * 0.03; camera.position.copy(P.pos); camera.rotation.set(0.03, P.yaw, 0, 'YXZ'); }
   updateEnv(dt); lightning(dt);
   U.uCam.value.copy(camera.position);
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
@@ -456,7 +487,7 @@ function frame(now) {
   const mn = Math.floor(S.hour * 60);
   if (mn !== lastMin || S.weather !== lastWx) { lastMin = mn; lastWx = S.weather; $('clock').textContent = `${fmt(S.hour)} · ${WEATHER[S.weather].name}`; if (!panel.hidden) { $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); } }
   document.body.classList.toggle('touchui', touchUI());
-  if (!joy && !rjoy && !look && performance.now() - ctlLast > 3000) for (const el of [stick, rstickEl, jumpEl]) el.classList.remove('vis');
+  if (!joy && !rjoy && !look && performance.now() - ctlLast > 3000) for (const el of [stick, rstickEl, jumpEl, $('down')]) el.classList.remove('vis');
   $('clock').hidden = !S.clock; $('fps').hidden = !S.fps;
   if (S.fps) { renderer.getDrawingBufferSize(dbs); $('fps').textContent = `${Math.round(fpsS)} к/с · ${Q.name.toLowerCase()} · ${dbs.x}×${dbs.y}`; }
   if ((hintT += dt) > 1) {

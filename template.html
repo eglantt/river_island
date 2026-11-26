@@ -31,8 +31,9 @@ html,body{height:100%;background:var(--moss);color:var(--ink);font:16px/1.45 Nun
 #rstick i{position:absolute;left:36px;top:36px;width:44px;height:44px;border-radius:50%;background:rgba(243,236,217,.4)}
 #jump{position:fixed;z-index:2;left:0;top:0;width:72px;height:72px;border-radius:50%;border:2px solid rgba(243,236,217,.35);background:rgba(20,30,25,.5);color:var(--ink);display:grid;place-items:center;pointer-events:none;transition:transform .1s,opacity .4s}
 #jump.down{transform:scale(.9);background:rgba(255,207,122,.35)}
-#stick,#rstick,#jump{opacity:0;visibility:hidden;transition:opacity .4s,visibility 0s .4s}
-#stick.vis,#rstick.vis,#jump.vis{opacity:1;visibility:visible;transition:opacity .15s}
+#down{position:fixed;z-index:2;left:0;top:0;width:72px;height:72px;border-radius:50%;border:2px solid rgba(243,236,217,.35);background:rgba(20,30,25,.5);color:var(--ink);display:grid;place-items:center;pointer-events:none}
+#stick,#rstick,#jump,#down{opacity:0;visibility:hidden;transition:opacity .4s,visibility 0s .4s}
+#stick.vis,#rstick.vis,#jump.vis,#down.vis{opacity:1;visibility:visible;transition:opacity .15s}
 #photobar{position:fixed;z-index:6;left:0;right:0;bottom:calc(env(safe-area-inset-bottom) + 22px);display:none;justify-content:center;gap:12px}
 #photobar button{min-height:48px;padding:0 22px;border-radius:24px;border:1px solid var(--line);background:rgba(20,30,25,.72);color:var(--ink);font:700 16px Nunito,sans-serif;cursor:pointer}
 #photobar #photoexit{width:48px;padding:0;font-size:26px}
@@ -117,7 +118,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold);touch-action:p
     <label class="row"><span>Палатка и костёр</span><input type="checkbox" id="camp"></label>
   </section>
   <section>
-    <h3>Камера</h3>
+    <h3 id="camhead" style="user-select:none;touch-action:manipulation">Камера</h3>
     <div class="seg cols2" id="mode"><button data-v="walk">Прогулка</button><button data-v="fly">Облёт</button></div>
   </section>
   <section>
@@ -135,6 +136,7 @@ input[type=range]{width:100%;height:36px;accent-color:var(--gold);touch-action:p
 <div id="stick"><i id="knob"></i></div>
 <div id="rstick" aria-hidden="true"><i id="rknob"></i></div>
 <div id="jump" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14l6-6 6 6"/><path d="M6 19h12"/></svg></div>
+<div id="down" aria-hidden="true"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10l6 6 6-6"/><path d="M6 5h12"/></svg></div>
 <div id="photobar"><button id="snap">Сохранить снимок</button><button id="photoexit" aria-label="Выйти из фоторежима">×</button></div>
 <div id="snapmsg">Снимок сохранён</div>
 <div id="hint">Телефон: слева — ходьба, справа — джойстик обзора и прыжок, свайп — тоже обзор. Компьютер: WASD, мышь, Shift — быстрее, пробел — прыжок.</div>

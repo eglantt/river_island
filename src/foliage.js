@@ -130,9 +130,10 @@ export class CardAcc {
       return o.multiplyScalar(0.75).addScaledVector(fn, 0.25).normalize();
     });
     const uv = pts.map(([a, b]) => [((flipU ? -a : a) + 1) / 2 * (u1 - u0) + u0, (b + 1) / 2 * (v1 - v0) + v0]);
+    const ao = corner.map((q) => { if (!crownC || !this.rad) return 1; const d = Math.min(1, q.distanceTo(crownC) / this.rad); return (0.5 + 0.5 * d) * (0.85 + 0.15 * Math.max(-1, Math.min(1, (q.y - crownC.y) / this.rad))); });
     for (const i of [0, 1, 2, 0, 2, 3]) {
       const q = corner[i]; this.p.push(q.x, q.y, q.z); this.n.push(nrm[i].x, nrm[i].y, nrm[i].z);
-      this.uv.push(uv[i][0], uv[i][1]); this.c.push(col.r, col.g, col.b); this.s.push(i >= 2 ? swT : swB);
+      this.uv.push(uv[i][0], uv[i][1]); this.c.push(col.r * ao[i], col.g * ao[i], col.b * ao[i]); this.s.push(i >= 2 ? swT : swB);
     }
   }
   // geometry from Acc-like (no uv) blob for the dark core, uv projected onto the core tile
@@ -169,4 +170,76 @@ export function cardAxes(R, size, outward, mode) {
   const kx = wide ? Math.sqrt(asp) : 1 / Math.sqrt(asp), ky = 1 / kx;
   const ax2 = ax.clone().multiplyScalar(c).addScaledVector(ay, s), ay2 = ay.clone().multiplyScalar(c).addScaledVector(ax, -s);
   return [ax2.multiplyScalar(size * kx), ay2.multiplyScalar(size * ky)];
+}
+
+// ---- tileable bark textures (repeat in both directions) ----
+export function makeBark(kind, size = 256) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = size; const g = cv.getContext('2d'), R = rng(kind === 'birch' ? 515 : 717);
+  const wrapLine = (pts, w, col) => { for (const dx of [-size, 0, size]) for (const dy of [-size, 0, size]) { g.strokeStyle = col; g.lineWidth = w; g.beginPath(); pts.forEach(([x, y], i) => (i ? g.lineTo(x + dx, y + dy) : g.moveTo(x + dx, y + dy))); g.stroke(); } };
+  if (kind === 'birch') {
+    g.fillStyle = '#e9e5db'; g.fillRect(0, 0, size, size);
+    for (let i = 0; i < 400; i++) { g.fillStyle = `rgba(${150 + R() * 60},${150 + R() * 55},${140 + R() * 50},${0.08 + R() * 0.12})`; g.fillRect(R() * size, R() * size, 4 + R() * 30, 2 + R() * 6); }
+    for (let i = 0; i < 70; i++) { // lenticels: short dark horizontal dashes
+      const x = R() * size, y = R() * size, w = 6 + R() * 26, h = 1 + R() * 2.5;
+      for (const dx of [-size, 0, size]) { g.fillStyle = `rgba(30,28,26,${0.55 + R() * 0.4})`; g.fillRect(x + dx, y, w, h); }
+    }
+    for (let i = 0; i < 10; i++) { // dark patches
+      const x = R() * size, y = R() * size, w = 10 + R() * 30, h = 6 + R() * 14;
+      for (const dx of [-size, 0, size]) for (const dy of [-size, 0, size]) { g.fillStyle = 'rgba(40,36,32,0.75)'; g.beginPath(); g.ellipse(x + dx, y + dy, w / 2, h / 2, 0, 0, 7); g.fill(); }
+    }
+  } else {
+    g.fillStyle = '#6b5a47'; g.fillRect(0, 0, size, size);
+    const n = 14;
+    for (let k = 0; k < n; k++) { // vertical furrows with periodic wobble
+      const x0 = (k + R() * 0.6) / n * size, ph = R() * 6.28, amp = 3 + R() * 6, cyc = 1 + Math.floor(R() * 3);
+      const pts = []; for (let y = 0; y <= size; y += 8) pts.push([x0 + Math.sin(y / size * Math.PI * 2 * cyc + ph) * amp, y]);
+      wrapLine(pts, 4 + R() * 4, 'rgba(28,22,17,0.85)');
+      wrapLine(pts.map(([x, y]) => [x + 5, y]), 2, 'rgba(150,130,105,0.35)');
+    }
+    for (let i = 0; i < 60; i++) { // cross cracks between furrows
+      const x = R() * size, y = R() * size; wrapLine([[x, y], [x + 8 + R() * 12, y + (R() - 0.5) * 5]], 1.5, 'rgba(30,24,18,0.6)');
+    }
+    const id = g.getImageData(0, 0, size, size), d = id.data;
+    for (let i = 0; i < d.length; i += 4) { const v = (R() - 0.5) * 26; d[i] += v; d[i + 1] += v; d[i + 2] += v; }
+    g.putImageData(id, 0, 0);
+  }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+
+// accumulator that keeps uvs (for bark)
+export class TexAcc {
+  constructor() { this.p = []; this.n = []; this.c = []; this.s = []; this.uv = []; }
+  add(geo, colorFn, swayFn, us = 1, vs = 1) {
+    const g = geo.index ? geo.toNonIndexed() : geo, P = g.attributes.position, Nn = g.attributes.normal, UV = g.attributes.uv, v = new THREE.Vector3(), nn = new THREE.Vector3();
+    for (let i = 0; i < P.count; i++) {
+      v.fromBufferAttribute(P, i); nn.fromBufferAttribute(Nn, i);
+      this.p.push(v.x, v.y, v.z); this.n.push(nn.x, nn.y, nn.z);
+      const c = colorFn(v, nn); this.c.push(c.r, c.g, c.b); this.s.push(swayFn ? swayFn(v) : 0);
+      this.uv.push(UV ? UV.getX(i) * us : 0, UV ? UV.getY(i) * vs : 0);
+    }
+    if (g !== geo) g.dispose(); geo.dispose();
+  }
+  build() {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3)); g.setAttribute('sway', new THREE.Float32BufferAttribute(this.s, 1));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2)); g.computeBoundingSphere(); return g;
+  }
+}
+
+// single leaf: folded along the midrib; petiole at origin, tip along +y, face normal +z
+export function leafGeo(L, W, shape) {
+  const f = W * 0.35, pts = shape === 'willow'
+    ? [[0, 0, 0], [-W * 0.6, L * 0.25, f], [-W, L * 0.55, f], [0, L, 0], [W, L * 0.55, f], [W * 0.6, L * 0.25, f]]
+    : [[0, 0, 0], [-W * 0.75, L * 0.25, f], [-W, L * 0.55, f], [-W * 0.55, L * 0.82, f * 0.6], [0, L, 0], [W * 0.55, L * 0.82, f * 0.6], [W, L * 0.55, f], [W * 0.75, L * 0.25, f]];
+  const mid = [0, L * 0.5, 0], pos = [], col = [], sw = [], nor = [];
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i + 1) % pts.length];
+    for (const q of [mid, a, b]) { pos.push(...q); const e = q === mid ? 1.08 : 0.92; col.push(e, e, e); sw.push(1); nor.push(0, 0, 1); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setAttribute('sway', new THREE.Float32BufferAttribute(sw, 1)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  return g;
 }
