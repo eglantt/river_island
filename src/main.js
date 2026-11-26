@@ -12,7 +12,7 @@ import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.21';
+const VERSION = '0.0.22';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -21,9 +21,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 140, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, reedIsle: 800, leaves: 2400, leafMode: 'leaves', algae: 2000, bankBush: 50 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 200, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, reedIsle: 1500, leaves: 5000, leafMode: 'leaves', algae: 3600, bankBush: 80 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 260, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, reedIsle: 2200, leaves: 10000, leafMode: 'leaves', algae: 5500, bankBush: 110 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 500, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, reedIsle: 800, leaves: 2400, leafMode: 'leaves', algae: 2000, bankBush: 50 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 800, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, reedIsle: 1500, leaves: 5000, leafMode: 'leaves', algae: 3600, bankBush: 80 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 1100, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, reedIsle: 2200, leaves: 10000, leafMode: 'leaves', algae: 5500, bankBush: 110 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -92,8 +92,8 @@ function applyRenderQuality() {
 const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0 };
 let curve = null, flyU = 0;
 function build() {
-  if (world) { scene.remove(world.group); disposeGroup(world.group); fauna.dispose(); ducks.dispose(); camp.dispose(); }
-  world = buildWorld(S.seed, Q); scene.add(world.group);
+  if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); camp.dispose(); }
+  world = buildWorld(S.seed, Q); world.bakeImpostors(renderer); scene.add(world.group);
   fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene);
   camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
   U.uCampA.value.set(camp.tentP.x, camp.tentP.z, camp.fireP.x, camp.fireP.z); U.uCampB.value.set(Math.cos(camp.yaw), Math.sin(camp.yaw), camp.halfW, camp.halfL);
@@ -503,6 +503,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { get ducks() { return ducks; }, testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

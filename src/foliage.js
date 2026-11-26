@@ -3,8 +3,8 @@ import { rng } from './noise.js';
 
 // Procedural foliage atlas: 3x2 tiles, each a whole chunk of crown with transparent gaps.
 // 0 oak/maple spray, 1 birch spray, 2 willow streamers, 3 spruce bough, 4 bush mass, 5 dense core leaves
-export const TILE = { oak: 0, birch: 1, willow: 2, spruce: 3, bush: 4, core: 5, oak2: 6, bush2: 7 };
-const COLS = 4, ROWS = 2;
+export const TILE = { oak: 0, birch: 1, willow: 2, spruce: 3, bush: 4, core: 5, oak2: 6, bush2: 7, sShoot: 8, sFringe: 9, sTip: 10, sDark: 11 };
+const COLS = 4, ROWS = 3;
 export function tileUV(t) { const c = t % COLS, r = Math.floor(t / COLS); return [c / COLS, 1 - (r + 1) / ROWS, (c + 1) / COLS, 1 - r / ROWS]; }
 
 export function makeFoliageAtlas(size) {
@@ -111,6 +111,48 @@ export function makeFoliageAtlas(size) {
       leaf(x, y, R() * 6.28, (8 + R() * 6) * s, (4 + R() * 2) * s, hsl(85 + R() * 30, 26 + R() * 16, 12 + R() * 16 + (1 - rr / (122 * s)) * -4), R() < 0.25);
     }
   });
+  // ---- spruce (Picea abies) foliage, drawn from small needles around shoots ----
+  // needles radiate around a shoot (all sides), short, leaning forward; light-green young growth near the tips
+  const needles = (x0, y0, x1, y1, len, dens, col) => {
+    const L = Math.hypot(x1 - x0, y1 - y0), n = Math.max(2, Math.round(L / s * dens * 1.3)), ux = (x1 - x0) / L, uy = (y1 - y0) / L;
+    for (let i = 0; i < n; i++) {
+      const u = i / n, px = x0 + (x1 - x0) * u, py = y0 + (y1 - y0) * u, c = col(u);
+      for (let q = 0; q < 2; q++) {
+        const side = q ? 1 : -1, a = (0.55 + R() * 0.55) * side, ca = Math.cos(a), sa = Math.sin(a), nl = len * (0.7 + R() * 0.5) * (1 - u * 0.35);
+        const dx = ux * ca - uy * sa, dy = uy * ca + ux * sa;
+        g.strokeStyle = c; g.lineWidth = (0.75 + R() * 0.4) * s; g.beginPath(); g.moveTo(px, py); g.lineTo(px + dx * nl, py + dy * nl); g.stroke();
+      }
+      if (R() < 0.5) { g.fillStyle = c; g.fillRect(px - s, py - s, 2 * s, 2 * s); } // needles seen end-on along the shoot
+    }
+  };
+  const nCol = (h, sat, l, tipL) => (u) => { const k = u > 0.7 ? (u - 0.7) / 0.3 : 0; return hsl(h + R() * 18 - k * 32, sat + R() * 12 + k * 22, l + R() * 10 + k * tipL); };
+  const shoot = (x0, y0, ang, L, depth, col, nlen) => { // a shoot with alternating side shoots, all needled
+    const x1 = x0 + Math.cos(ang) * L, y1 = y0 + Math.sin(ang) * L;
+    twig(x0, y0, x1, y1, (depth ? 1.6 : 0.9) * s, 'rgba(70,50,32,1)');
+    if (depth > 0) {
+      const ns = 4 + Math.floor(L / (26 * s));
+      for (let k = 1; k <= ns; k++) {
+        const u = k / (ns + 1), bx = x0 + (x1 - x0) * u, by = y0 + (y1 - y0) * u, sd = k % 2 ? 1 : -1;
+        shoot(bx, by, ang + sd * (0.65 + R() * 0.35), L * (0.42 - u * 0.25) * (0.8 + R() * 0.4), depth - 1, col, nlen * 0.92);
+      }
+    }
+    needles(x0, y0, x1, y1, nlen * s, 0.55, col);
+  };
+  // 8: side shoot — flat feathered spray, base on the left, tip on the right
+  inTile(8, () => shoot(4 * s, 130 * s, -0.04, 245 * s, 2, nCol(122, 24, 17, 14), 9));
+  // 9: hanging fringe — a twig along the top with thin needled shoots hanging down
+  inTile(9, () => {
+    const y0 = 22 * s; twig(2 * s, y0, 250 * s, y0 + 6 * s, 2.2 * s, 'rgba(70,50,32,1)'); needles(2 * s, y0, 250 * s, y0 + 6 * s, 10 * s, 0.5, nCol(124, 22, 14, 10));
+    for (let k = 0; k < 9; k++) {
+      const x = (14 + k * 27 + R() * 10) * s, L = (200 - k * 9 + R() * 30) * s;
+      shoot(x, y0 + 3 * s, Math.PI / 2 + (R() - 0.3) * 0.25, Math.min(L, 228 * s), 1, nCol(126, 22, 13, 14), 9);
+    }
+  });
+  // 10: young tip — short light-green shoot
+  inTile(10, () => shoot(10 * s, 128 * s, -0.08, 230 * s, 2, (u) => hsl(98 + R() * 14, 32 + R() * 10, 25 + R() * 8 + u * 6), 9));
+  // 11: dark inner needles — shaded old growth, irregular clumps
+  inTile(11, () => { for (let k = 0; k < 16; k++) { const x = (20 + R() * 216) * s, y = (20 + R() * 216) * s; shoot(x, y, R() * 6.28, (50 + R() * 70) * s, 1, () => hsl(125 + R() * 20, 18 + R() * 10, 8 + R() * 8), 10); } });
+
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; tex.generateMipmaps = true;
   tex.minFilter = THREE.LinearMipmapLinearFilter; tex.magFilter = THREE.LinearFilter;

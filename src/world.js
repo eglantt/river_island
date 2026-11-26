@@ -69,6 +69,7 @@ function foliageMats(Q) {
   return { mk, depth };
 }
 export function buildWorld(seed, Q) {
+  let world_bake = () => {}, world_dispose = () => {};
   const R = rng(seed), N = makeNoise(seed), group = new THREE.Group();
   const meshes = {};
   // ---------- river & island shape ----------
@@ -902,43 +903,65 @@ export function buildWorld(seed, Q) {
     // beneath each bough; ragged outline (random lengths, gaps); spire with a leader; dead twigs on the bare lower trunk.
     // o: { lv: whorls, per: branches per whorl, bare: bare trunk fraction, slim: crown width, dense, crook: top bend, young }
     const spruce = (o) => {
-      const acc = new CardAcc(), tr = new Acc(), top = 11.2, deadC = C('#6a635a'), barkC = C('#4e4034');
+      const acc = new CardAcc(), tr = new Acc(), top = 11.2, deadC = C('#6a635a'), barkC = C('#4e4034'), stickC = C('#5a4232');
+      const lite = Q.sprucePer < 7; // low tier: fewer cards per bough
       // trunk axis with a slight sway and an optional crooked top
       const ca = R() * 6.28, axis = (y) => { const t = y / top; return new V3(Math.sin(y * 0.35 + ca) * 0.06 + Math.cos(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12, y, Math.cos(y * 0.31 + ca) * 0.06 + Math.sin(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12); };
       for (let k = 0; k < 8; k++) { const y0 = -0.5 + k / 8 * (top + 0.6), y1 = -0.5 + (k + 1) / 8 * (top + 0.6); tr.add(limbGeo(axis(y0), axis(y1), 0.26 * (1 - k / 8) ** 0.9 + 0.025, 0.26 * (1 - (k + 1) / 8) ** 0.9 + 0.02, 5, 1), () => barkC, () => 0); }
-      const y0 = top * o.bare + 0.4;
-      let y = y0, wi = 0; const step = (top - 0.7 - y0) / (Q.spruceLv * (o.young ? 1.1 : 1));
+      const y0 = top * o.bare + 0.4, crownR = 3.0 * o.slim + 0.3;
+      acc.rad = crownR * 1.1;
+      // crown profile: widest at the crown base, slightly concave toward the spire
+      const prof = (t) => Math.pow(1 - t, 1.12) * (1 - 0.12 * Math.sin(Math.PI * t));
+      // a bough: brown main shoot + several small needle cards in different planes + light tip
       const bough = (base, ang, L, t, tilt) => {
-        const elev = t > 0.72 ? 0.25 + (t - 0.72) * 1.6 : t > 0.4 ? 0.05 - (0.72 - t) * 0.2 : -0.12 - (0.4 - t) * 0.9; // radians
-        const e = elev + tilt, dir = new V3(Math.cos(ang) * Math.cos(e), Math.sin(e), Math.sin(ang) * Math.cos(e));
-        const side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
-        const roll = (R() - 0.5) * 0.5, col = tint((0.88 + t * 0.25) * (0.88 + R() * 0.22));
-        // flat spray along the bough
-        const ay = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(L * 0.52 * o.dense);
-        acc.card(base.clone().addScaledVector(dir, L / 2 + 0.05), dir.clone().multiplyScalar(L / 2 + 0.05), ay, TILE.spruce, axis(base.y), col, base.y * 0.012, (base.y + 0.4) * 0.016, R() < 0.5);
-        // hanging comb below the bough (lower and middle crown)
-        if (t < 0.78 && L > 0.9 && R() < 0.75) {
-          const hang = up.clone().multiplyScalar(-1).addScaledVector(dir, 0.15).normalize(), hl = L * (0.16 + 0.1 * (1 - t));
-          acc.card(base.clone().addScaledVector(dir, L * 0.55).addScaledVector(hang, hl * 0.9), dir.clone().multiplyScalar(L * 0.42), hang.multiplyScalar(hl), TILE.spruce, axis(base.y), col.clone().multiplyScalar(0.85), base.y * 0.012, base.y * 0.014, R() < 0.5);
+        const elev = t > 0.72 ? 0.25 + (t - 0.72) * 1.6 : t > 0.4 ? 0.05 - (0.72 - t) * 0.2 : -0.12 - (0.4 - t) * 0.9;
+        const e = elev + tilt, hd = new V3(Math.cos(ang), 0, Math.sin(ang));
+        const sag = t < 0.55 ? (0.55 - t) * 0.35 : 0, up = t < 0.5 ? (0.5 - t) * 0.5 : 0; // lower boughs sag and turn their tips up
+        const cur = (u) => base.clone().addScaledVector(hd, L * u * Math.cos(e)).add(new V3(0, L * u * Math.sin(e) - L * sag * Math.sin(Math.PI * u) + L * up * u * u * u, 0));
+        const side = new V3(-hd.z, 0, hd.x), cC = axis(base.y - 1.2), shade = (1.05 + t * 0.3) * (0.88 + R() * 0.2);
+        if (L > 0.55) tr.add(limbGeo(base, cur(0.8), 0.012 + 0.01 * L, 0.004, 3, 1), () => stickC, () => 0);
+        const n = Math.max(2, Math.min(6, Math.round(1.5 + L * 1.3) - (lite ? 1 : 0)));
+        for (let j = 0; j < n; j++) {
+          const u0 = j / n, u1 = (j + 1.25) / n, a = cur(Math.min(1, u0)), b = cur(Math.min(1, u1)), d = b.clone().sub(a), seg = d.length(); d.normalize();
+          const c = a.clone().lerp(b, 0.5), w = seg * (0.55 + 0.2 * (1 - u0)) * o.dense;
+          const kind = j % 3, roll = kind === 0 ? (R() - 0.5) * 0.3 : (kind === 1 ? 1 : -1) * (0.5 + R() * 0.3);
+          const upv = new V3().crossVectors(d, side).multiplyScalar(-1).normalize();
+          const ay = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(upv, Math.sin(roll)).multiplyScalar(w);
+          acc.card(c, d.clone().multiplyScalar(seg * 0.6), ay, TILE.sShoot, cC, tint(shade), base.y * 0.012, (base.y + 0.4) * 0.016, R() < 0.5);
+          // hanging fringe under the bough in the lower and middle crown
+          if (t < 0.75 && (j === 1 || (j === 3 && !lite)) && L > 0.7) {
+            const hl = seg * (0.5 + 0.35 * (1 - t));
+            acc.card(c.clone().add(new V3(0, -hl * 0.78, 0)), d.clone().multiplyScalar(seg * 0.62), new V3(0, hl, 0).addScaledVector(side, (R() - 0.5) * 0.3 * hl), TILE.sFringe, cC, tint(shade * 0.9), base.y * 0.012, base.y * 0.014, R() < 0.5);
+          }
         }
+        // light young growth at the tip
+        const tp = cur(1), td = tp.clone().sub(cur(0.88)).normalize().add(new V3(0, 0.15, 0)).normalize(), tl = Math.min(0.28, L * 0.18);
+        acc.card(tp.clone().addScaledVector(td, tl * 0.5), td.clone().multiplyScalar(tl * 0.6), side.clone().multiplyScalar(tl * 0.45), TILE.sTip, cC, tint(1.05 + R() * 0.1), base.y * 0.012, (base.y + 0.4) * 0.016);
       };
+      let y = y0, wi = 0; const step = (top - 0.7 - y0) / (Q.spruceLv * (o.young ? 1.1 : 1));
       while (y < top - 0.7) {
         const t = (y - y0) / (top - 0.7 - y0), lump = 0.82 + R() * 0.33;
         const nPer = Math.max(3, Math.round(o.per * (1 - t * 0.4) + (R() - 0.5) * 2)), rot = wi * 2.4;
-        const maxL = (3.0 * Math.pow(1 - t, 0.9) * o.slim + 0.3) * (o.young ? 0.85 : 1);
+        const maxL = (crownR * prof(t) + 0.3) * (o.young ? 0.85 : 1);
         for (let k = 0; k < nPer; k++) {
           if (R() < 0.08 && t < 0.85) continue; // gaps in the crown
           const ang = rot + (k + (R() - 0.5) * 0.7) / nPer * Math.PI * 2, L = maxL * lump * (0.7 + R() * 0.5);
           bough(axis(y), ang, L, t, (R() - 0.5) * 0.15);
         }
-        // intermediate branches between whorls
-        if (R() < (Q.spruceLv > 14 ? 0.4 : 0.15) && t < 0.85) { const yi = y + 0.2, ang = R() * 6.28; bough(axis(yi), ang, maxL * (0.45 + R() * 0.3), t, -0.05); }
+        if (R() < (Q.spruceLv > 14 ? 0.4 : 0.15) && t < 0.85) { const yi = y + step * 0.5, ang = R() * 6.28; bough(axis(yi), ang, maxL * (0.45 + R() * 0.3), t, -0.05); }
+        // shaded old needles close to the trunk (instead of a solid core)
+        if (t < 0.8 && R() < 0.8) {
+          const a = R() * 6.28, rr = maxL * (0.25 + R() * 0.25), c = axis(y).add(new V3(Math.cos(a) * rr, -0.1, Math.sin(a) * rr)), sz = maxL * 0.3 + 0.15;
+          const [ax, ay] = cardAxes(R, sz, new V3(Math.cos(a), 0, Math.sin(a)), 'out');
+          acc.card(c, ax, ay, TILE.sDark, axis(y - 1.2), tint(0.75), y * 0.012, y * 0.014, R() < 0.5);
+        }
         y += step * (0.75 + R() * 0.5) * (t > 0.8 ? 0.75 : 1); wi++;
       }
-      // spire: small upright sprays and the leader
-      for (let k = 0; k < 4; k++) { const a = k * 1.6 + R(), yy = top - 0.65 + k * 0.08; bough(axis(yy), a, 0.35 - k * 0.05, 0.95, 0.2); }
-      { const b = axis(top - 0.55), tp = axis(top + 0.25), d = tp.clone().sub(b), sd = new V3(1, 0, 0).multiplyScalar(0.07);
-        acc.card(b.clone().addScaledVector(d, 0.5), d.clone().multiplyScalar(0.5), sd, TILE.spruce, null, tint(1.05), top * 0.012, top * 0.017); }
+      // spire: short upright whorls and the leader
+      for (let k = 0; k < 4; k++) { const a = k * 1.6 + R(), yy = top - 0.65 + k * 0.08; bough(axis(yy), a, 0.4 - k * 0.06, 0.95, 0.2); }
+      { const b = axis(top - 0.55), tp = axis(top + 0.3), d = tp.clone().sub(b);
+        acc.card(b.clone().addScaledVector(d, 0.5), d.clone().multiplyScalar(0.5), new V3(0.09, 0, 0), TILE.sTip, axis(top - 2), tint(1.05), top * 0.012, top * 0.017);
+        acc.card(b.clone().addScaledVector(d, 0.5), d.clone().multiplyScalar(0.5), new V3(0, 0, 0.09), TILE.sTip, axis(top - 2), tint(1.05), top * 0.012, top * 0.017); }
       // dead twigs on the bare trunk (forest trees)
       if (o.bare > 0.12) {
         for (let yy = 1.2; yy < y0; yy += 0.5 + R() * 0.4) {
@@ -950,12 +973,6 @@ export function buildWorld(seed, Q) {
           }
         }
       }
-      // dark inner core: the shaded inside of the crown seen through gaps between boughs
-      { const cy0 = y0 + 0.3, h = top - 0.9 - cy0, rb = (3.0 * o.slim + 0.3) * 0.3;
-        const cone = new THREE.ConeGeometry(rb, h, 6, 2, true).translate(0, cy0 + h / 2, 0);
-        const P = cone.attributes.position; for (let i = 0; i < P.count; i++) { const yy = P.getY(i), q = axis(yy); P.setX(i, P.getX(i) * (0.85 + R() * 0.3) + q.x); P.setZ(i, P.getZ(i) * (0.85 + R() * 0.3) + q.z); }
-        cone.computeVertexNormals();
-        tr.add(cone, (v) => tmp.copy(C('#2e4a32')).multiplyScalar(0.85 + 0.35 * (v.y - cy0) / h), () => 0); }
       acc.rad = 0;
       return [tr.build(), acc.build()];
     };
@@ -981,11 +998,12 @@ export function buildWorld(seed, Q) {
     const nCV = Math.min(SPV.length, Q.variants + 2);
     const conV = SPV.slice(0, nCV).map((o) => spruce(o));
     const decV = [[Q.forestCards, 1.0, 1.0], [Q.forestCards, 1.15, 0.85], [Q.forestCards, 0.9, 1.2]].slice(0, Math.max(2, Q.variants - 1)).map((v) => broad(...v));
-    const conFar = spruce({ per: 5, bare: 0.1, slim: 1.0, dense: 1.3, crook: 0 }), decFar = broad(Math.round(Q.forestCards * 0.4), 1.0, 1.0);
+    const decFar = broad(Math.round(Q.forestCards * 0.4), 1.0, 1.0);
     const fmat = FM.mk('forestfol', 0.25);
     const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'forest', 0.25);
     const ftint = new THREE.Color();
-    const placeF = (con, far) => (d) => {
+    // one placement: returns [matrix, colour, distance from the water] or null
+    const placeOne = (con, far) => {
       for (let t = 0; t < 40; t++) {
         const x = (R() * 2 - 1) * (far ? 1050 : 430), side = R() < 0.5 ? -1 : 1;
         const bd = far ? 75 + R() * 900 : 6 + Math.pow(R(), 2.2) * 75;
@@ -995,26 +1013,105 @@ export function buildWorld(seed, Q) {
         if (N.fbm(x * 0.012, z * 0.012, 2) < -0.32) continue;
         const pc = sm(20, 160, bd) * 0.75 + 0.15;
         if ((R() < pc) !== con) continue;
-        const s = (0.75 + R() * 0.7) * (far ? 1.35 : 1);
-        d.position.set(x, h, z); d.rotation.set((R() - 0.5) * 0.08, R() * 6.28, (R() - 0.5) * 0.08); d.scale.set(s, s * (0.85 + R() * 0.4), s);
-        return con ? ftint.setHSL(0.27 + R() * 0.06, 0.1 + R() * 0.14, 0.5 + R() * 0.1).multiplyScalar(2.15) : ftint.setHSL(0.2 + R() * 0.06, 0.12 + R() * 0.12, 0.45 + R() * 0.1).multiplyScalar(2.1);
+        const s = (0.75 + R() * 0.7) * (far ? 1.35 : 1) * (con ? 1.1 : 1);
+        dummy.position.set(x, h, z); dummy.rotation.set((R() - 0.5) * 0.08, R() * 6.28, (R() - 0.5) * 0.08); dummy.scale.set(s, s * (0.85 + R() * 0.4), s); dummy.updateMatrix();
+        const col = con ? new THREE.Color().setHSL(0.27 + R() * 0.06, 0.1 + R() * 0.14, 0.5 + R() * 0.1).multiplyScalar(2.15) : new THREE.Color().setHSL(0.2 + R() * 0.06, 0.12 + R() * 0.12, 0.45 + R() * 0.1).multiplyScalar(2.1);
+        return [dummy.matrix.clone(), col, bd];
       }
       return null;
     };
-    // same placement stream for trunk + foliage of each kind: place once, copy matrices
-    const pair = (trunkGeo, folGeo, count, con, far) => {
-      const tm = instanced(trunkGeo, mat, count, placeF(con, far));
-      const fm = new THREE.InstancedMesh(folGeo, fmat, tm.count); fm.frustumCulled = false; fm.customDepthMaterial = FM.depth;
-      const m4 = new THREE.Matrix4(), cl = new THREE.Color();
-      for (let i = 0; i < tm.count; i++) { tm.getMatrixAt(i, m4); fm.setMatrixAt(i, m4); tm.getColorAt(i, cl); fm.setColorAt(i, cl); }
-      fm.instanceMatrix.needsUpdate = true; if (fm.instanceColor) fm.instanceColor.needsUpdate = true; group.add(fm);
-      return [tm, fm];
+    const fromList = (geo, mt, list) => {
+      const m = new THREE.InstancedMesh(geo, mt, Math.max(1, list.length));
+      list.forEach(([m4, c], i) => { m.setMatrixAt(i, m4); m.setColorAt(i, c); });
+      m.count = list.length; m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.frustumCulled = false; group.add(m); return m;
     };
+    const pairL = (trunkGeo, folGeo, list) => { const fm = fromList(folGeo, fmat, list); fm.customDepthMaterial = FM.depth; return [fromList(trunkGeo, mat, list), fm]; };
     const dtB = decT.build();
-    meshes.con = conV.map(([tg, g]) => pair(tg, g, Math.round(Q.forest * 0.55 / conV.length), true, false));
-    meshes.dec = decV.map((g) => pair(dtB, g, Math.round(Q.forest * 0.45 / decV.length), false, false));
-    meshes.conF = pair(conFar[0], conFar[1], Math.round(Q.far * 0.55), true, true);
-    meshes.decF = pair(dtB, decFar, Math.round(Q.far * 0.45), false, true);
+    // broadleaves as before
+    const gen = (con, far, n) => { const L = []; for (let i = 0; i < n; i++) { const r = placeOne(con, far); if (r) L.push(r); } return L; };
+    const decN = gen(false, false, Math.round(Q.forest * 0.45)), decFL = gen(false, true, Math.round(Q.far * 0.45));
+    meshes.dec = decV.map((g, v) => pairL(dtB, g, decN.filter((_, i) => i % decV.length === v)));
+    meshes.decF = pairL(dtB, decFar, decFL);
+    // spruces: detailed geometry for the row near the water, impostors beyond
+    const conAll = gen(true, false, Math.round(Q.forest * 0.55)).concat(gen(true, true, Math.round(Q.far * 0.55)));
+    const NEAR = Q.spruceLv > 14 ? 30 : 26, conNear = conAll.filter((r) => r[2] < NEAR), conImp = conAll.filter((r) => r[2] >= NEAR);
+    meshes.con = conV.map(([tg, g], v) => pairL(tg, g, conNear.filter((_, i) => i % conV.length === v)));
+    // ---- impostors: each of the first variants baked from 8 directions x 2 elevations into an atlas ----
+    const nIV = Math.min(3, conV.length), F = Q.atlas >= 512 ? 160 : Q.atlas >= 320 ? 112 : 72, IW = 8.5, IH = 14.4, IPY = 5.4, Fh = Math.round(F * IH / IW);
+    const rtOpt = { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true };
+    const rtA = new THREE.WebGLRenderTarget(8 * F, 2 * nIV * Fh, { ...rtOpt, type: THREE.HalfFloatType });
+    const rtN = new THREE.WebGLRenderTarget(8 * F, 2 * nIV * Fh, rtOpt);
+    const quad = new THREE.PlaneGeometry(IW, IH, 1, 1), qn = quad.attributes.position.count;
+    quad.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(qn), 1)); quad.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(qn * 3).fill(1), 3));
+    const impMat = (v) => {
+      const m = patch(new THREE.MeshLambertMaterial({ vertexColors: true, alphaTest: 0.5, alphaToCoverage: !!Q.bloom }), 'imp' + v, 0, { FOLI: '' });
+      const base = m.onBeforeCompile;
+      m.customProgramCacheKey = () => 'imp' + v;
+      m.onBeforeCompile = (sh) => {
+        base(sh);
+        sh.uniforms.tAlb = { value: rtA.texture }; sh.uniforms.tNrm = { value: rtN.texture }; sh.uniforms.uVar = { value: v }; sh.uniforms.uNIV = { value: nIV };
+        const VAR = 'varying vec2 vImpUv; varying vec2 vK; varying float vBl, vRowB; varying mat3 vRot;\n';
+        sh.vertexShader = VAR + sh.vertexShader.replace('#include <begin_vertex>', `vec3 transformed = vec3(position);
+          {
+            mat3 M = mat3(instanceMatrix);
+            vec3 pivW = (modelMatrix * instanceMatrix * vec4(0.0, ${IPY.toFixed(2)}, 0.0, 1.0)).xyz;
+            vec3 dl = normalize(inverse(M) * (cameraPosition - pivW));
+            float az = atan(dl.z, dl.x); if (az < 0.0) az += 6.2831853;
+            float fa = az / 6.2831853 * 8.0, k0 = floor(fa);
+            vBl = fa - k0; vK = vec2(mod(k0, 8.0), mod(k0 + 1.0, 8.0));
+            vRowB = smoothstep(0.12, 0.5, asin(clamp(dl.y, -1.0, 1.0)));
+            vec3 rt = normalize(cross(vec3(0.0, 1.0, 0.0), dl)), upv = cross(dl, rt);
+            transformed = vec3(0.0, ${IPY.toFixed(2)}, 0.0) + rt * position.x + upv * position.y;
+            vRot = mat3(normalize(M[0]), normalize(M[1]), normalize(M[2]));
+            vImpUv = uv;
+          }`);
+        sh.fragmentShader = VAR + 'uniform sampler2D tAlb, tNrm; uniform float uVar, uNIV;\nvec3 nTex;\n' + sh.fragmentShader.replace('#include <map_fragment>', `{
+            float rows = 2.0 * uNIV;
+            vec2 a0 = vec2((vK.x + vImpUv.x) / 8.0, (uVar * 2.0 + vImpUv.y) / rows), a1 = vec2((vK.y + vImpUv.x) / 8.0, a0.y);
+            vec2 b0 = a0 + vec2(0.0, 1.0 / rows), b1 = a1 + vec2(0.0, 1.0 / rows);
+            vec4 al = mix(mix(texture2D(tAlb, a0), texture2D(tAlb, a1), vBl), mix(texture2D(tAlb, b0), texture2D(tAlb, b1), vBl), vRowB);
+            vec4 nn = mix(mix(texture2D(tNrm, a0), texture2D(tNrm, a1), vBl), mix(texture2D(tNrm, b0), texture2D(tNrm, b1), vBl), vRowB);
+            nTex = normalize(nn.xyz / max(nn.a, 0.01) * 2.0 - 1.0);
+            diffuseColor.rgb *= al.rgb / max(nn.a, 0.01); diffuseColor.a *= nn.a;
+          }`).replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+          normal = normalize((viewMatrix * vec4(vRot * nTex, 0.0)).xyz);`);
+      };
+      return m;
+    };
+    const impM = [];
+    for (let v = 0; v < nIV; v++) impM.push(fromList(quad, impMat(v), conImp.filter((_, i) => i % nIV === v)));
+    meshes.conImp = impM; meshes.impRT = [rtA, rtN, F, Fh];
+    // bake on the GPU once the renderer is available
+    world_bake = (renderer) => {
+      const sc = new THREE.Scene(), cam = new THREE.OrthographicCamera(-IW / 2, IW / 2, IH / 2, -IH / 2, 1, 200);
+      const map = FM.depth.map;
+      const albF = new THREE.MeshBasicMaterial({ vertexColors: true, map, alphaTest: 0.5, side: THREE.DoubleSide }), albT = new THREE.MeshBasicMaterial({ vertexColors: true });
+      const nrmSh = (useMap) => new THREE.ShaderMaterial({
+        uniforms: { map: { value: map } }, side: THREE.DoubleSide,
+        vertexShader: 'varying vec3 vN; varying vec2 vU; void main(){ vN = normal; ' + (useMap ? 'vU = uv;' : 'vU = vec2(0.0);') + ' gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+        fragmentShader: 'uniform sampler2D map; varying vec3 vN; varying vec2 vU; void main(){ ' + (useMap ? 'if (texture2D(map, vU).a < 0.5) discard; ' : '') + 'gl_FragColor = vec4(normalize(vN) * 0.5 + 0.5, 1.0); }',
+      });
+      const nrmF = nrmSh(true), nrmT = nrmSh(false);
+      const prevRT = renderer.getRenderTarget(), prevCol = renderer.getClearColor(new THREE.Color()), prevA = renderer.getClearAlpha(), prevAuto = renderer.autoClear;
+      renderer.autoClear = false;
+      for (const [rt, fm, tm, cc] of [[rtA, albF, albT, [0, 0, 0]], [rtN, nrmF, nrmT, [0, 0, 0]]]) {
+        renderer.setRenderTarget(rt); renderer.setClearColor(new THREE.Color(...cc), 0); rt.scissorTest = true;
+        rt.scissor.set(0, 0, rt.width, rt.height); rt.viewport.set(0, 0, rt.width, rt.height); renderer.setRenderTarget(rt); renderer.clear(true, true);
+        for (let v = 0; v < nIV; v++) {
+          sc.clear(); const [tg, g] = conV[v]; sc.add(new THREE.Mesh(tg, tm), new THREE.Mesh(g, fm));
+          for (let row = 0; row < 2; row++) for (let k = 0; k < 8; k++) {
+            const az = k / 8 * Math.PI * 2, el = row ? 0.61 : 0.05, d = new V3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
+            cam.position.set(0, IPY, 0).addScaledVector(d, 60); cam.up.set(0, 1, 0); cam.lookAt(0, IPY, 0); cam.updateMatrixWorld();
+            rt.viewport.set(k * F, (v * 2 + row) * Fh, F, Fh); rt.scissor.copy(rt.viewport); renderer.setRenderTarget(rt);
+            renderer.clear(true, true); renderer.render(sc, cam);
+          }
+        }
+        rt.scissorTest = false; rt.viewport.set(0, 0, rt.width, rt.height);
+      }
+      renderer.setRenderTarget(prevRT); renderer.setClearColor(prevCol, prevA); renderer.autoClear = prevAuto;
+      for (const m of [albF, albT, nrmF, nrmT]) m.dispose();
+    };
+    world_dispose = () => { rtA.dispose(); rtN.dispose(); };
   }
 
   // ---------- water lilies in the calm water below the sand bar ----------
@@ -1032,39 +1129,64 @@ export function buildWorld(seed, Q) {
       if (h < -0.3 && h > -1.1 && spots.every(([p, q]) => Math.hypot(p - x, q - z) > 9)) spots.push([x, z]);
     }
     if (spots.length) {
-      const pad = new THREE.CircleGeometry(1, 14, 0.25, Math.PI * 2 - 0.5); pad.rotateX(-Math.PI / 2);
-      pad.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(pad.attributes.position.count), 1));
-      pad.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(pad.attributes.position.count * 3).fill(1), 3));
-      const padMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true });
-      const pads = [], tint = new THREE.Color();
-      meshes.pads = instanced(pad, padMat, Q.lily, (d) => {
-        for (let t = 0; t < 20; t++) {
-          const s = spots[Math.floor(R() * spots.length)], x = s[0] + (R() - 0.5) * 9, z = s[1] + (R() - 0.5) * 7, h = H(x, z);
-          if (h > -0.25 || h < -1.6 || pads.some(([a, b, r]) => Math.hypot(a - x, b - z) < r + 0.25)) continue;
-          const r = 0.5 + R() * 0.4; pads.push([x, z, r]);
-          d.position.set(x, 0.012, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(r, 1, r);
-          return tint.setHSL(0.27 + (R() - 0.5) * 0.05, 0.55, 0.28 + R() * 0.08);
+      // Nymphaea pad, 1 m radius before scaling: notch to the centre, 22 edge points, slightly irregular rim
+      const padGeo = (redRim) => {
+        const NE = 22, notch = 0.2, pos = [], col = [], nor = [];
+        const ring = (k, r, lift) => { const a = notch / 2 + k / NE * (Math.PI * 2 - notch); return [Math.cos(a) * r, lift, Math.sin(a) * r]; };
+        const wob = Array.from({ length: NE + 1 }, () => 0.94 + R() * 0.08), lift = Array.from({ length: NE + 1 }, () => R() * 0.03);
+        const cC = [1.12, 1.12, 1.0], cM = [1, 1, 1], cE = redRim ? [1.55, 0.72, 0.55] : [0.92, 0.95, 0.9];
+        for (let k = 0; k < NE; k++) {
+          const m0 = ring(k, 0.6 * wob[k], 0), m1 = ring(k + 1, 0.6 * wob[k + 1], 0), e0 = ring(k, wob[k], lift[k]), e1 = ring(k + 1, wob[k + 1], lift[k + 1]);
+          const vein = k % 2 ? cM : [1.07, 1.07, 0.98];
+          for (const [q, c] of [[[0, 0.004, 0], cC], [m1, vein], [m0, vein], [m0, vein], [m1, vein], [e1, cE], [m0, vein], [e1, cE], [e0, cE]]) { pos.push(...q); col.push(...c); nor.push(0, 1, 0); }
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
+        return g;
+      };
+      // opaque, and pulled toward the camera in depth so the water plane never wins the depth test (no flicker)
+      const padMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 });
+      const pads = [], tint = new THREE.Color(), olive = C('#4a5e2c'), yel = C('#7a7038');
+      // dense clumps: gaussian scatter around each spot, pads touch and overlap slightly
+      const placePad = (d) => {
+        for (let t = 0; t < 40; t++) {
+          const s = spots[Math.floor(R() * spots.length)], rad = s[2];
+          const gx = (R() + R() + R() - 1.5) * rad * 0.9, gz = (R() + R() + R() - 1.5) * rad * 0.7, x = s[0] + gx, z = s[1] + gz, h = H(x, z);
+          if (h > -0.22 || h < -1.6) continue;
+          const r = 0.125 + R() * 0.075;
+          if (pads.some(([a, b, rr]) => Math.hypot(a - x, b - z) < (r + rr) * 0.82)) continue;
+          pads.push([x, z, r]);
+          d.position.set(x, 0.025, z); d.rotation.set((R() - 0.5) * 0.04, R() * 6.28, (R() - 0.5) * 0.04); d.scale.set(r, 1, r);
+          tint.copy(olive).offsetHSL((R() - 0.5) * 0.04, (R() - 0.5) * 0.1, (R() - 0.5) * 0.05);
+          if (R() < 0.06) tint.lerp(yel, 0.3 + R() * 0.25);
+          return tint;
         }
         return null;
-      });
+      };
+      spots.forEach((sp) => sp.push(1.6 + R() * 1.3));
+      const nRed = Math.round(Q.lily * 0.3);
+      meshes.pads = instanced(padGeo(false), padMat, Q.lily - nRed, placePad);
+      meshes.padsR = instanced(padGeo(true), padMat, nRed, placePad);
+      meshes.padsR.renderOrder = 3;
       meshes.pads.renderOrder = 3;
       // flowers: petals close at night (uOpen)
       const pos = [], col = [], sw = [], nor = [];
-      for (let ring = 0; ring < 2; ring++) for (let k = 0; k < 8; k++) {
-        const a = (k + ring * 0.5) / 8 * 6.283, r = ring ? 0.075 : 0.1, w2 = 0.028, y0 = 0.01 + ring * 0.012;
+      for (let ring = 0; ring < 3; ring++) for (let k = 0; k < 8; k++) {
+        const a = (k + ring * 0.5) / 8 * 6.283, r = [0.1, 0.08, 0.055][ring], w2 = [0.03, 0.026, 0.02][ring], y0 = 0.01 + ring * 0.014;
         const cx = Math.cos(a), cz = Math.sin(a), px = -cz, pz = cx;
-        pos.push(px * w2, y0, pz * w2, -px * w2, y0, -pz * w2, cx * r, y0 + 0.035, cz * r);
+        pos.push(px * w2, y0, pz * w2, -px * w2, y0, -pz * w2, cx * r, y0 + 0.03 + ring * 0.015, cz * r);
         for (let q = 0; q < 3; q++) { col.push(1, 1, 1); nor.push(0, 1, 0); } sw.push(0, 0, 1);
       }
       for (let k = 0; k < 6; k++) { const a = k / 6 * 6.283, b = (k + 1) / 6 * 6.283; pos.push(0, 0.03, 0, Math.cos(a) * 0.022, 0.028, Math.sin(a) * 0.022, Math.cos(b) * 0.022, 0.028, Math.sin(b) * 0.022); for (let q = 0; q < 3; q++) { col.push(1, 0.82, 0.2); nor.push(0, 1, 0); sw.push(0); } }
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
       g.setAttribute('sway', new THREE.Float32BufferAttribute(sw, 1)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-      const fMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true }), 'lily', 0, { LILY: '', NOFLIP: '' });
+      const fMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }), 'lily', 0, { LILY: '', NOFLIP: '' });
       const pinks = [C('#ffffff'), C('#fff4f8'), C('#ffc7dc')];
-      meshes.lilies = instanced(g, fMat, Math.ceil(Q.lily / 2), (d) => {
+      meshes.lilies = instanced(g, fMat, Math.ceil(Q.lily / 10), (d) => {
         if (!pads.length) return null; const p = pads[Math.floor(R() * pads.length)];
-        d.position.set(p[0] + (R() - 0.5) * 0.1, 0.012, p[1] + (R() - 0.5) * 0.1); d.rotation.set(0, R() * 6.28, 0); const s = 1.7 + R() * 0.6; d.scale.set(s, s, s);
+        d.position.set(p[0] + (R() - 0.5) * 0.04, 0.03, p[1] + (R() - 0.5) * 0.04); d.rotation.set(0, R() * 6.28, 0); const bud = R() < 0.25, s = (bud ? 0.4 : 0.55) + R() * 0.17; d.scale.set(bud ? s * 0.55 : s, bud ? s * 1.6 : s, bud ? s * 0.55 : s);
         return pinks[Math.floor(R() * pinks.length)].clone().multiplyScalar(1.15);
       });
       meshes.lilies.renderOrder = 3;
@@ -1116,7 +1238,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, flowerPts, reedPts, spawn, onIsland };
+  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {
