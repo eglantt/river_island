@@ -44,8 +44,12 @@ export function createSnakes(world, Q, scene) {
         bel *= 1.0 - 0.35 * smoothstep(0.42, 0.5, abs(fract(along / 0.0075) - 0.5));
         vec3 col = mix(dors, bel, belly);
         // yellow "ears" behind the head with black edge behind them (flanks only)
-        float neck = smoothstep(0.0, 0.003, along) * (1.0 - smoothstep(0.024, 0.029, along)) * smoothstep(0.35, 0.6, abs(sin(a))) * smoothstep(-0.1, 0.25, -ca + 0.45) * (1.0 - belly);
-        float blk = smoothstep(0.026, 0.03, along) * (1.0 - smoothstep(0.042, 0.048, along)) * smoothstep(0.05, 0.3, abs(sin(a))) * (1.0 - belly);
+        // yellow "ears": a crescent on each side right behind the head (concave toward the head), black band behind it
+        float sideM = 1.0 - smoothstep(0.72, 0.86, abs(ca));                 // flanks only, about ±55° from the horizontal
+        float kk = clamp(1.0 - (ca / 0.82) * (ca / 0.82), 0.0, 1.0);
+        float fr = 0.0015 + 0.003 * kk, bk = 0.0145 + 0.0015 * kk;              // front edge bulges back in the middle
+        float neck = smoothstep(fr - 0.0008, fr + 0.0008, along) * (1.0 - smoothstep(bk - 0.0008, bk + 0.0008, along)) * sideM * (1.0 - belly);
+        float blk = smoothstep(bk - 0.0008, bk + 0.0008, along) * (1.0 - smoothstep(bk + 0.0065, bk + 0.0085, along)) * (1.0 - smoothstep(0.78, 0.92, abs(ca))) * (1.0 - belly);
         col = mix(col, vec3(1.0, 0.8, 0.25), neck); col = mix(col, vec3(0.03, 0.03, 0.03), blk);
         diffuseColor.rgb = mix(col, vec3(0.04, 0.09, 0.085), clamp(-vWp.y * 3.0 + max(-vWp.y, 0.0) * 8.0, 0.0, 0.85));
       }`);
