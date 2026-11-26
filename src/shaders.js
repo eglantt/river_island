@@ -10,7 +10,8 @@ export const U = {
   uZen: { value: new THREE.Color() }, uHor: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() },
   uSunCol: { value: new THREE.Color() }, uCloudLit: { value: new THREE.Color() }, uCloudDark: { value: new THREE.Color() },
   uAmb: { value: new THREE.Color() }, uWet: { value: 0 }, uRain: { value: 0 }, uFlash: { value: 0 },
-  uDuck: { value: Array.from({ length: 9 }, () => new THREE.Vector4(0, 0, 0, 0)) },
+  uDuck: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 0, 0)) },
+  uSnk: { value: Array.from({ length: 48 }, () => new THREE.Vector4(0, 0, 0, 0)) }, uSnB: { value: Array.from({ length: 3 }, () => new THREE.Vector4(0, 0, 0, 0)) },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
   uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
@@ -268,7 +269,7 @@ export function waterMaterial() {
       #include <fog_pars_fragment>
       uniform sampler2D tNoise, tWaterN, tDepth, tHzn; uniform vec2 uCloudOff, uWindDir; uniform float uCover, uDark, uSunVis, uTime, uRain, uWind, uMoonVis, uFlash, uNight, uSunOcc, uMoonOcc;
       uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog; uniform float uFogSky;
-      uniform vec4 uRip[4]; uniform vec4 uDuck[9]; uniform vec4 uDepthBox, uRiver, uBolt;
+      uniform vec4 uRip[4]; uniform vec4 uDuck[6]; uniform vec4 uSnk[48]; uniform vec4 uSnB[3]; uniform vec4 uDepthBox, uRiver, uBolt;
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -302,7 +303,7 @@ export function waterMaterial() {
           }
         }
         // duck wakes: a small bow ring and a V of waves trailing behind each swimming duck
-        for (int i = 0; i < 9; i++) {
+        for (int i = 0; i < 6; i++) {
           vec2 vel = uDuck[i].zw; float spd = length(vel); if (spd < 0.01) continue;
           vec2 fwd = vel / spd, lat = vec2(-fwd.y, fwd.x), dv = vWp.xz - uDuck[i].xy;
           float along = -dot(dv, fwd), l = dot(dv, lat), al = abs(l), dd = length(dv);
@@ -315,6 +316,33 @@ export function waterMaterial() {
           nxy += dv / max(dd, 0.001) * ring * 0.15;
         }
         for (int i = 0; i < 4; i++) { float age = uTime - uRip[i].z; if (age > 0.0 && age < 4.0) nxy += ripple(vWp.xz, uRip[i].xy, age, uRip[i].w); }
+        // grass snakes: thin crests that outline the swimming body, a narrow bow "whisker" from the head,
+        // and arcs that keep spreading from where the body has passed; water is clearer over the submerged body
+        float snkClr = 0.0, snkRim = 0.0, snkCrest = 0.0;
+        for (int sI = 0; sI < 3; sI++) {
+          vec4 B = uSnB[sI]; if (B.z <= 0.0) continue;
+          if (length(vWp.xz - B.xy) > B.z + 1.6) continue;
+          float dB = 9.0, dW = 9.0, ageW = 0.0; vec2 dirW = vec2(0.0);
+          for (int q = 0; q < 15; q++) {
+            vec4 a = uSnk[sI * 16 + q], b = uSnk[sI * 16 + q + 1];
+            vec2 ab = b.xy - a.xy; float h = clamp(dot(vWp.xz - a.xy, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+            vec2 c = a.xy + ab * h; float d = length(vWp.xz - c), age = mix(a.z, b.z, h);
+            if (q < 9 && d < dB) dB = d;
+            float de = d - age * 0.3;
+            if (de < dW) { dW = de; ageW = age; dirW = (vWp.xz - c) / max(d, 1e-4); }
+          }
+          float rr = 0.013;
+          snkClr = max(snkClr, 1.0 - smoothstep(rr * 0.8, rr * 1.4, dB));
+          snkRim = max(snkRim, exp(-pow((dB - rr * 1.15) / 0.0035, 2.0)) * (0.4 + 0.6 * B.w));
+          float x = dW - rr;
+          float cr = sin(x * 320.0 - uTime * 7.0) * exp(-max(x, 0.0) * 22.0) * exp(-ageW * 0.9) * step(0.0, x) * B.w;
+          nxy += dirW * cr * 0.4; snkCrest = max(snkCrest, abs(cr));
+          // bow whiskers from the head
+          vec2 hp = uSnk[sI * 16].xy, fw = normalize(uSnk[sI * 16].xy - uSnk[sI * 16 + 1].xy), lt = vec2(-fw.y, fw.x), dv = vWp.xz - hp;
+          float along = -dot(dv, fw), al = abs(dot(dv, lt)), arm = al - max(along, 0.0) * 0.28 - 0.008;
+          float bw = sin(arm * 300.0 - uTime * 8.0) * exp(-arm * arm * 6000.0) * step(-0.01, along) * exp(-max(along, 0.0) * 2.5) * B.w;
+          nxy += lt * sign(dot(dv, lt)) * bw * 0.25; snkCrest = max(snkCrest, abs(bw));
+        }
         float flt = smoothstep(30.0, 220.0, dist);
         nxy *= mix(0.55, 0.12, flt);
         vec3 N = normalize(vec3(nxy.x, 1.0, nxy.y));
@@ -376,6 +404,8 @@ export function waterMaterial() {
         col += vec3(0.75, 0.8, 1.0) * uFlash * 0.5;
         float clearW = 1.0 - smoothstep(0.35, 1.7, depth); // ~5 m strip along the shore
         float alpha = clamp(mix(0.42, 0.97, smoothstep(0.0, 1.4, depth)) * (1.0 - clearW * 0.82) + fres * mix(0.5, 0.25, clearW) + foam*0.15, 0.0, 1.0);
+        col += (uAmb + uSunCol * uSunVis * 0.4) * (snkRim * 0.35 + snkCrest * 0.22);
+        alpha = mix(alpha, alpha * 0.28, snkClr);
         gl_FragColor = vec4(col, alpha);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

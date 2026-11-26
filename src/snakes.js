@@ -47,7 +47,7 @@ export function createSnakes(world, Q, scene) {
         float neck = smoothstep(0.0, 0.004, along) * (1.0 - smoothstep(0.022, 0.027, along)) * smoothstep(0.5, 0.75, abs(sin(a))) * smoothstep(-0.1, 0.25, -ca + 0.3) * (1.0 - belly);
         float blk = smoothstep(0.023, 0.028, along) * (1.0 - smoothstep(0.04, 0.046, along)) * smoothstep(0.05, 0.3, abs(sin(a))) * (1.0 - belly);
         col = mix(col, vec3(0.95, 0.78, 0.22), neck); col = mix(col, vec3(0.03, 0.03, 0.03), blk);
-        diffuseColor.rgb = col;
+        diffuseColor.rgb = mix(col, vec3(0.05, 0.11, 0.1), clamp(-vWp.y * 22.0, 0.0, 0.55));
       }`);
     };
     return m;
@@ -140,15 +140,16 @@ export function createSnakes(world, Q, scene) {
     // initial trail: a gentle S on land
     const start = bank ? bankPt(false) : islandPt(0.2, 0.7), trail = [];
     const a0 = R() * 6.28;
-    for (let i = 0; i <= 120; i++) { const s = i / 120 * (L + 0.1); trail.push(new V(start.x - Math.cos(a0) * s + Math.sin(s * 9) * 0.04 * Math.sin(a0), 0, start.z - Math.sin(a0) * s - Math.sin(s * 9) * 0.04 * Math.cos(a0))); }
+    for (let i = 1; i <= 200; i++) { const s = i / 200 * (L + 0.1); trail.push(new V(start.x - Math.cos(a0) * s, 0, start.z - Math.sin(a0) * s)); }
     snakes.push({
-      bank, L, body, head, tongue, trail, hd: new V().copy(start), th: a0, ph: R() * 6, spd: 0, state: 'crawl', goal: null, stateT: 0, nextT: 5 + R() * 10,
-      tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, coil: 0, hidden: 0, wet: 0, look: 0, lookT: 0, slot: 6 + k, splashed: false, rMax: L * 0.0165,
+      bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: 0, wph: 0, amp: 0, swimAmp: 0.25,
+      spd: 0, state: 'crawl', goal: null, stateT: 0, tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, flat: 0, hidden: 0, wet: 0, look: 0, curLook: 0, lookT: 0, splashed: false,
+      rMax: L * 0.0165, lifts: new Float32Array(NODES), pose: null, poseI: 0,
     });
   }
 
   // ---------- behaviour ----------
-  const groundY = (x, z, r) => { const h = H(x, z); return Math.max(h + r * 0.85, r * 0.3); };
+  const Hg = world.Hmesh || H; // height of the visible terrain mesh (triangles), not the analytic field
   const pickGoal = (s, env) => {
     const sunny = env.sunInt * (1 - (env.cover || 0)) > 0.35 && env.day > 0.5;
     const r = R();
@@ -156,116 +157,195 @@ export function createSnakes(world, Q, scene) {
     if (r < 0.65) { s.state = 'crawl'; s.goal = s.bank ? (R() < 0.5 ? bankPt(true) : bankPt(false)) : (R() < 0.45 ? islandWater() : islandPt(0.15, 0.9)); return; }
     s.state = 'crawl'; s.goal = s.bank ? bankPt(false) : islandPt(0.15, 0.9);
   };
-  const tmp = new V(), side = new V(), upv = new V(), T = new V(), Pn = [], Tn = [];
-  for (let i = 0; i < NODES; i++) { Pn.push(new V()); Tn.push(new V()); }
+  const tmp = new V(), side = new V(), upv = new V(), T = new V(), UP = new V(0, 1, 0);
+  const Pl = [], Pw = [], Pn = [], Tn = [];
+  for (let i = 0; i < NODES; i++) { Pl.push(new V()); Pw.push(new V()); Pn.push(new V()); Tn.push(new V()); }
   const radius = (s, u) => { // u: 0 snout .. 1 tail tip
     const neck = 0.58 + 0.42 * sm(0.0, 0.13, u), tail = 1 - sm(0.7, 1.0, u) * 0.9;
     return s.rMax * neck * tail * (1 + 0.05 * Math.sin(u * 40));
   };
+  // basking poses, drawn tail -> head as turtle segments [length (fraction of L), turn (rad, + = left)]
+  const POSES = {
+    // A: flat cluster of loops in one layer: big outer arc, U-folds inward, small neck loop, head in the middle
+    flat: [[0.06, 0], [0.58, 4.5], [0.13, 3.14], [0.14, -3.0], [0.09, 3.3], [0.04, 0.8]],
+    // B: loose ring with the front third climbing over it, head resting on top
+    ring: [[0.03, 0], [0.7, 5.6], [0.14, 1.5], [0.13, -2.6]],
+  };
+  const posePath = (s, kind) => {
+    const segs = POSES[kind], mir = R() < 0.5 ? -1 : 1, pts = [];
+    let x = s.hd.x, z = s.hd.z, th = s.th, total = 0;
+    for (const [lf, turn0] of segs) {
+      const len = lf * s.L * (0.96 + R() * 0.08), turn = turn0 * mir * (0.95 + R() * 0.1), n = Math.max(2, Math.ceil(len / 0.006));
+      for (let i = 0; i < n; i++) { th += turn / n; x += Math.cos(th) * len / n; z += Math.sin(th) * len / n; pts.push([x, z]); }
+      total += len;
+    }
+    return pts;
+  };
+  const pushTrail = (arr, x, z, minD, max) => {
+    const l = arr[0];
+    if (!l || Math.hypot(x - l.x, z - l.z) > minD) { arr.unshift(new V(x, 0, z)); if (arr.length > max) arr.length = max; }
+    else { l.x = x; l.z = z; }
+  };
+  // sample a polyline (starting at p0, then arr[0..]) by arclength into out[]
+  const sampleTrail = (p0x, p0z, arr, ds, out) => {
+    let ti = -1, acc = 0, ax = p0x, az = p0z;
+    out[0].set(p0x, 0, p0z);
+    for (let i = 1; i < out.length; i++) {
+      const need = i * ds;
+      for (;;) {
+        const b = arr[ti + 1]; if (!b) { const pv = out[i - 1], pp = out[Math.max(0, i - 2)]; out[i].set(pv.x + (pv.x - pp.x), 0, pv.z + (pv.z - pp.z)); break; }
+        const seg = Math.hypot(b.x - ax, b.z - az);
+        if (acc + seg >= need && seg > 1e-7) { const f = (need - acc) / seg; out[i].set(ax + (b.x - ax) * f, 0, az + (b.z - az) * f); break; }
+        acc += seg; ax = b.x; az = b.z; ti++;
+      }
+    }
+  };
+  // swimming body: axis trail + travelling wave whose amplitude grows toward the tail; arclength kept = L
+  const swimBody = (s, out) => {
+    const k = 2 * Math.PI / (0.6 * s.L), ds = s.L / (NODES - 1);
+    let ti = -1, ax = s.ax.x, az = s.ax.z, x = 0, arc = 0, i = 1, px = 0, pz = 0, first = true;
+    const pt = (bx, bz, dx, dz, xx) => { const a = (0.006 + 0.07 * s.L * Math.min(1, xx / (0.8 * s.L))) * s.swimAmp; const y = a * Math.sin(k * xx - s.wph); return [bx - dz * y, bz + dx * y]; };
+    let dirx = Math.cos(s.axTh + Math.PI), dirz = Math.sin(s.axTh + Math.PI);
+    { const [hx, hz] = pt(ax, az, -dirx, -dirz, 0); out[0].set(hx, 0, hz); px = hx; pz = hz; }
+    while (i < NODES) {
+      const b = s.axTrail[ti + 1];
+      let bx, bz;
+      if (b) { bx = b.x; bz = b.z; } else { bx = ax + dirx * 0.05; bz = az + dirz * 0.05; }
+      const seg = Math.hypot(bx - ax, bz - az);
+      if (seg < 1e-6) { ti++; ax = bx; az = bz; if (!b && first) break; continue; }
+      dirx = (bx - ax) / seg; dirz = (bz - az) / seg;
+      const steps = Math.max(1, Math.ceil(seg / 0.004));
+      for (let q = 1; q <= steps && i < NODES; q++) {
+        const f = q / steps, cx = ax + (bx - ax) * f, cz = az + (bz - az) * f, xx = x + seg * f;
+        const [qx, qz] = pt(cx, cz, -dirx, -dirz, xx);
+        arc += Math.hypot(qx - px, qz - pz); px = qx; pz = qz;
+        while (i < NODES && arc >= i * ds) { out[i].set(qx, 0, qz); i++; }
+      }
+      x += seg; ax = bx; az = bz; ti++; first = false;
+      if (!b && ti > s.axTrail.length + 400) break;
+    }
+    for (; i < NODES; i++) out[i].copy(out[i - 1]);
+  };
+  const snkU = U.uSnk.value, snkB = U.uSnB.value;
 
   function update(dt, t, env) {
     dt = Math.min(dt, 0.1);
     const night = env.night > 0.55, wetW = (env.rain || 0) > 0.25, cam = env.cam;
     for (let k = 0; k < snakes.length; k++) {
       const s = snakes[k];
-      // hide at night / in rain: crawl into cover and sink out of sight; come back later
       const wantHide = night || wetW;
-      if (wantHide && s.state !== 'hide' && s.state !== 'hidden') { s.state = 'hide'; s.goal = s.bank ? bankPt(false) : islandPt(0.4, 0.85); }
+      if (wantHide && s.state !== 'hide' && s.state !== 'hidden') { s.state = 'hide'; s.pose = null; s.goal = s.bank ? bankPt(false) : islandPt(0.4, 0.85); }
       if (!wantHide && (s.state === 'hide' || s.state === 'hidden')) { s.hidden = Math.max(0, s.hidden - dt * 0.3); if (s.hidden <= 0) { s.state = 'crawl'; pickGoal(s, env); } }
       // flee from the player
       const dp = cam ? Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) : 99;
-      if (!s.noFlee && dp < 3.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) {
-        s.state = 'flee'; s.stateT = 4 + R() * 3;
+      if (!s.noFlee && dp < 3.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
+        s.state = 'flee'; s.stateT = 4 + R() * 3; s.pose = null;
         const away = new V(s.hd.x - cam.x, 0, s.hd.z - cam.z).normalize();
         const w = s.bank ? bankPt(true) : islandWater();
         s.goal = new V(w.x - s.hd.x, 0, w.z - s.hd.z).normalize().dot(away) > 0 ? w : s.hd.clone().addScaledVector(away, 4);
       }
-      const inWater = H(s.hd.x, s.hd.z) < -0.06;
-      if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.12); s.splashed = true; }
+      const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
+      if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.1); s.splashed = true; }
       if (!inWater) s.splashed = false;
-      s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 2);
-      // target speed per state
+      s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 1.2);
+      // speed per state
       let want = 0;
-      if (s.state === 'bask') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
+      if (s.state === 'bask') { s.stateT -= dt; if (s.stateT <= 0) { pickGoal(s, env); } }
       else if (s.state === 'hidden') want = 0;
+      else if (s.state === 'pose') want = 0.13;
       else {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
-        want = s.state === 'flee' ? 0.65 : inWater ? 0.42 : 0.26 + 0.1 * Math.sin(t * 0.3 + k);
+        want = s.state === 'flee' ? 0.6 : inWater ? 0.35 : 0.24 + 0.08 * Math.sin(t * 0.3 + k);
         if (s.state === 'flee') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
-        // occasional pauses while crawling
-        if (s.state === 'crawl' && Math.sin(t * 0.21 + k * 2.1) > 0.85) want *= 0.05;
-        if (s.state === 'toBask' && toG < 0.4) { s.state = 'coil'; s.coil = 0; s.coilDir = R() < 0.5 ? 1 : -1; s.coilR = 0.13 + R() * 0.03; }
-        else if (s.state === 'coil') { want = 0.18; s.coil += want * dt; if (s.coil > s.L * 1.05) { s.state = 'bask'; s.stateT = 30 + R() * 60; } }
-        else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') { s.state = 'hidden'; } else pickGoal(s, env); }
+        if (s.state === 'crawl' && !inWater && Math.sin(t * 0.21 + k * 2.1) > 0.88) want *= 0.03; // short pauses
+        if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
+        else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
       }
       if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
-      s.spd += (want - s.spd) * Math.min(1, dt * 3);
-      // steering: toward the goal, lateral undulation, obstacle avoidance, stay near home
-      if (s.spd > 0.005) {
-        let wantTh = s.th;
-        if (s.state === 'coil') s.th += s.coilDir * s.spd / Math.max(0.06, s.coilR - s.coil * 0.06) * dt;
-        else {
-          if (s.goal) wantTh = Math.atan2(s.goal.z - s.hd.z, s.goal.x - s.hd.x);
-          let dTh = Math.atan2(Math.sin(wantTh - s.th), Math.cos(wantTh - s.th));
-          // avoid trunks and rocks
+      s.spd += (want - s.spd) * Math.min(1, dt * 2.5);
+      s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
+      // ---- head motion ----
+      const step = s.spd * dt;
+      if (step > 1e-5) {
+        if (s.state === 'pose' && s.pose) {
+          // follow the pose path exactly: the body lays itself into the shape
+          let rem = step;
+          while (rem > 0 && s.poseI < s.pose.length) {
+            const [px, pz] = s.pose[s.poseI], d = Math.hypot(px - s.hd.x, pz - s.hd.z);
+            if (d <= rem) { s.hd.x = px; s.hd.z = pz; rem -= d; s.poseI++; } else { s.hd.x += (px - s.hd.x) / d * rem; s.hd.z += (pz - s.hd.z) / d * rem; rem = 0; }
+          }
+          const tr = s.trail[0]; if (tr) s.th = Math.atan2(s.hd.z - tr.z, s.hd.x - tr.x);
+          if (s.poseI >= s.pose.length) { s.state = 'bask'; s.stateT = 35 + R() * 60; s.spd = 0; }
+          s.ax.set(s.hd.x, 0, s.hd.z); s.axTh = s.th; s.amp = 0;
+        } else {
+          // steer the axis toward the goal, around trunks and rocks
+          let dTh = 0;
+          if (s.goal) dTh = Math.atan2(Math.sin(Math.atan2(s.goal.z - s.ax.z, s.goal.x - s.ax.x) - s.axTh), Math.cos(Math.atan2(s.goal.z - s.ax.z, s.goal.x - s.ax.x) - s.axTh));
           for (const [ox, oz, orr] of obst) {
             const dx = ox - s.hd.x, dz = oz - s.hd.z, dd = Math.hypot(dx, dz);
-            if (dd < orr + 0.5) { const fa = Math.atan2(dz, dx), rel = Math.atan2(Math.sin(fa - s.th), Math.cos(fa - s.th)); if (Math.abs(rel) < 1.3) dTh += (rel > 0 ? -1 : 1) * 1.5 * (1 - (dd - orr) / 0.5); }
+            if (dd < orr + 0.6) { const fa = Math.atan2(dz, dx), rel = Math.atan2(Math.sin(fa - s.axTh), Math.cos(fa - s.axTh)); if (Math.abs(rel) < 1.4) dTh += (rel > 0 ? -1 : 1) * 1.6 * (1 - (dd - orr) / 0.6); }
           }
-          s.ph += s.spd * dt * (inWater ? 14 : 17);
-          const und = Math.sin(s.ph) * (inWater ? 1.5 : 2.1);
-          s.th += (Math.max(-1.6, Math.min(1.6, dTh)) * 1.2 + und) * dt * Math.min(1, s.spd / 0.15 + 0.2);
+          const maxTurn = s.spd / (s.wet > 0.5 ? 0.35 : 0.22) * dt; // turning radius limit: no sharp corners in the path
+          s.axTh += Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
+          // land: serpenoid path — the heading swings ±~70° sinusoidally with the distance crawled, giving round U-loops
+          // with straight flanks (wave length along the body ~0.42 L); in the water the head goes almost straight
+          const thMax = 1.4 * s.amp * (1 - s.wet) * (s.state === 'flee' ? 0.85 : 1), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
+          s.wph0 += 2 * Math.PI * step / lam;
+          const hth = s.axTh + thMax * Math.sin(s.wph0);
+          const nx = s.hd.x + Math.cos(hth) * step, nz = s.hd.z + Math.sin(hth) * step;
+          const tooDeep = Hg(nx, nz) < -1.7, offHome = s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5;
+          if (tooDeep || offHome) { s.axTh += s.spd / 0.3 * dt; s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); if (s.state === 'flee') s.state = 'crawl'; }
+          else { s.hd.x = nx; s.hd.z = nz; s.th = hth; }
+          // axis follows the mean line of the head path
+          const J = 0.67 + 0.33 * (1 - s.amp * (1 - s.wet));
+          s.ax.x += Math.cos(s.axTh) * step * J; s.ax.z += Math.sin(s.axTh) * step * J;
+          const kk = Math.min(1, dt * 0.8); s.ax.x += (s.hd.x - s.ax.x) * kk; s.ax.z += (s.hd.z - s.ax.z) * kk;
+          s.amp = Math.min(1, s.amp + step / (0.3 * s.L));
         }
-        const nx = s.hd.x + Math.cos(s.th) * s.spd * dt, nz = s.hd.z + Math.sin(s.th) * s.spd * dt;
-        const tooDeep = H(nx, nz) < -1.7, offHome = s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5;
-        if (tooDeep || offHome) { s.th += 2.2 * dt * 3; s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); if (s.state === 'flee') s.state = 'crawl'; }
-        else { s.hd.x = nx; s.hd.z = nz; }
-        // extend the trail
-        const last = s.trail[0];
-        if (Math.hypot(s.hd.x - last.x, s.hd.z - last.z) > 0.008) { s.trail.unshift(new V(s.hd.x, 0, s.hd.z)); if (s.trail.length > 400) s.trail.length = 400; }
+        pushTrail(s.trail, s.hd.x, s.hd.z, 0.006, 500);
+        pushTrail(s.axTrail, s.ax.x, s.ax.z, 0.01, 260);
+        // swimming wave travels backward ~1.6x faster than the snake moves forward
+        s.wph += (2 * Math.PI / (0.6 * s.L)) * step * 1.6 + dt * 1.5 * s.wet;
       }
-      // ---- body: sample the trail by arclength ----
-      const ds = s.L / (NODES - 1);
-      let ti = 0, acc = 0; Pn[0].set(s.hd.x, 0, s.hd.z);
-      let prev = Pn[0].clone();
-      for (let i = 1; i < NODES; i++) {
-        const need = i * ds;
-        while (ti < s.trail.length - 1) {
-          const a = ti === 0 ? Pn[0] : s.trail[ti], b = s.trail[ti + 1] || s.trail[ti], seg = a.distanceTo(b);
-          if (acc + seg >= need && seg > 1e-6) { Pn[i].copy(a).lerp(b, (need - acc) / seg); break; }
-          acc += seg; ti++;
-        }
-        if (ti >= s.trail.length - 1) Pn[i].copy(prev).add(tmp.subVectors(prev, Pn[Math.max(0, i - 2)]).setY(0));
-        prev = Pn[i];
-      }
-      // heights: on the ground, or at the water surface; head raised when swimming / basking alert
-      const alert = s.state === 'bask' ? 0.35 + 0.35 * Math.max(0, Math.sin(t * 0.13 + k)) : s.state === 'flee' ? 0.6 : 0.15;
-      s.lift += ((s.wet > 0.5 ? 1 : alert) - s.lift) * Math.min(1, dt * 2);
-      const sinkH = s.hidden * 0.12;
+      s.swimAmp += ((s.wet > 0.4 && s.spd > 0.03 ? 1 : 0.25) - s.swimAmp) * Math.min(1, dt * 1.5);
+      // ---- body ----
+      const ds = s.L / (NODES - 1), wB = sm(0.15, 0.85, s.wet);
+      sampleTrail(s.hd.x, s.hd.z, s.trail, ds, Pl);
+      if (wB > 0.001) { swimBody(s, Pw); for (let i = 0; i < NODES; i++) Pn[i].copy(Pl[i]).lerp(Pw[i], wB); }
+      else for (let i = 0; i < NODES; i++) Pn[i].copy(Pl[i]);
+      // heights: on the visible ground, floating at the surface in water; head + neck raised
+      const alert = s.state === 'bask' ? 0.3 + 0.5 * Math.max(0, Math.sin(t * 0.13 + k * 1.7)) : s.state === 'flee' ? 0.6 : 0.25;
+      s.lift += ((s.wet > 0.5 ? 0.5 : alert) - s.lift) * Math.min(1, dt * 2);
+      const sinkH = s.hidden * 0.12, fl = 1 - 0.25 * s.flat;
       for (let i = 0; i < NODES; i++) {
-        const u = i / (NODES - 1), r = radius(s, u);
-        let y = groundY(Pn[i].x, Pn[i].z, r);
-        const hl = Math.max(0, 1 - i / 6); y += hl * hl * (0.012 + 0.03 * s.lift) * (s.state === 'hidden' ? 0 : 1);
-Pn[i].y = y - sinkH;
+        const u = i / (NODES - 1), r = radius(s, u) * fl;
+        const g = Hg(Pn[i].x, Pn[i].z);
+        let y = Math.max(g + r * 0.95 + 0.002, -r * 0.2);
+        const hl = Math.max(0, 1 - i / 7); y += hl * hl * (0.006 + 0.02 * s.lift);
+        Pn[i].y = y - sinkH;
       }
-      // coils: lift crossing body segments over the ones beneath
-      const lifts = new Float32Array(NODES);
+      // where the body crosses itself, the part nearer the head lies on top
+      const lifts = s.lifts;
+      lifts.fill(0);
       for (let i = 0; i < NODES; i++) for (let j = i + 8; j < NODES; j++) {
-        const d = Math.hypot(Pn[i].x - Pn[j].x, Pn[i].z - Pn[j].z), rr = radius(s, i / (NODES - 1)) + radius(s, j / (NODES - 1));
-        if (d < rr * 1.05) lifts[i] = Math.max(lifts[i], (rr * 1.05 - d) * 1.6);
+        const d = Math.hypot(Pn[i].x - Pn[j].x, Pn[i].z - Pn[j].z), rr = (radius(s, i / (NODES - 1)) + radius(s, j / (NODES - 1))) * fl;
+        if (d < rr * 1.02) lifts[i] = Math.max(lifts[i], (Pn[j].y - Pn[i].y) + Math.sqrt(Math.max(0, rr * rr - d * d)) * 1.05);
       }
-      for (let i = 0; i < NODES; i++) { let a = 0, w = 0; for (let k2 = -3; k2 <= 3; k2++) { const q = i + k2; if (q < 0 || q >= NODES) continue; const ww = 4 - Math.abs(k2); a += lifts[q] * ww; w += ww; } Pn[i].y += a / w; }
+      for (let i = 0; i < NODES; i++) { let a = 0, w = 0; for (let k2 = -4; k2 <= 4; k2++) { const q = i + k2; if (q < 0 || q >= NODES) continue; const ww = 5 - Math.abs(k2); a = Math.max(a, lifts[q] * ww / 5); w += ww; } Pn[i].y += a; }
+      // smooth heights along the body
+      for (let pass = 0; pass < 2; pass++) { let prev = Pn[0].y; for (let i = 1; i < NODES - 1; i++) { const cur = Pn[i].y; Pn[i].y = Math.max(cur, (prev + 2 * cur + Pn[i + 1].y) / 4); prev = cur; } }
       // tube vertices
       const P = s.body.geometry.attributes.position.array, Nr = s.body.geometry.attributes.normal.array;
+      const breathe = 1 + 0.03 * Math.sin(t * 1.3 + k) * s.flat;
       for (let i = 0; i < NODES; i++) {
         const a = Pn[Math.max(0, i - 1)], b = Pn[Math.min(NODES - 1, i + 1)];
-        T.subVectors(a, b).normalize(); Tn[i].copy(T); // toward the head
-        side.crossVectors(new V(0, 1, 0), T).normalize(); upv.crossVectors(T, side).normalize();
-        const r = radius(s, i / (NODES - 1)), rw = r * 1.08, rh = r * 0.9;
+        T.subVectors(a, b).normalize(); Tn[i].copy(T);
+        side.crossVectors(UP, T).normalize(); upv.crossVectors(T, side).normalize();
+        const u = i / (NODES - 1), r = radius(s, u), rw = r * (1.08 + 0.2 * s.flat), rh = r * (0.9 - 0.22 * s.flat) * (u > 0.2 && u < 0.6 ? breathe : 1);
         for (let j = 0; j <= RAD; j++) {
           const ang = j / RAD * Math.PI * 2, ca = Math.cos(ang), sa = Math.sin(ang);
-          const yy = ca < 0 ? ca * 0.82 : ca; // flatter belly
+          const yy = ca < 0 ? ca * 0.82 : ca;
           const q = (i * (RAD + 1) + j) * 3;
           P[q] = Pn[i].x + upv.x * yy * rh + side.x * sa * rw; P[q + 1] = Pn[i].y + upv.y * yy * rh + side.y * sa * rw; P[q + 2] = Pn[i].z + upv.z * yy * rh + side.z * sa * rw;
           const nx = upv.x * yy / rh + side.x * sa / rw, ny = upv.y * yy / rh + side.y * sa / rw, nz = upv.z * yy / rh + side.z * sa / rw, nl = Math.hypot(nx, ny, nz) || 1;
@@ -274,22 +354,36 @@ Pn[i].y = y - sinkH;
       }
       s.body.geometry.attributes.position.needsUpdate = true; s.body.geometry.attributes.normal.needsUpdate = true;
       s.body.geometry.computeBoundingSphere();
-      // head: sits in front of node 0, along its tangent, with a little look-around while basking
-      s.lookT -= dt; if (s.lookT <= 0) { s.look = s.state === 'bask' ? (R() - 0.5) * 1.2 : (R() - 0.5) * 0.3; s.lookT = 1.5 + R() * 3; }
+      // head
+      s.lookT -= dt; if (s.lookT <= 0) { s.look = s.state === 'bask' ? (R() - 0.5) * 1.0 : (R() - 0.5) * 0.25; s.lookT = 1.5 + R() * 3; }
+      s.curLook += (s.look - s.curLook) * Math.min(1, dt * 2);
       const yaw = Math.atan2(-Tn[0].z, Tn[0].x), pitch = Math.asin(Math.max(-1, Math.min(1, Tn[0].y)));
-      s.head.rotation.set(0, 0, 0); s.head.rotation.order = 'YZX';
-      s.head.rotation.y = yaw + (s.curLook = (s.curLook || 0) + (s.look - (s.curLook || 0)) * Math.min(1, dt * 2)); s.head.rotation.z = pitch + 0.08 * s.lift;
+      s.head.rotation.order = 'YZX'; s.head.rotation.set(0, yaw + s.curLook, pitch + 0.06 * s.lift);
       s.head.position.copy(Pn[0]).addScaledVector(Tn[0], -0.004); s.head.position.y += 0.0005;
-      const hs = s.rMax / 0.0145; s.head.scale.setScalar(hs);
-      // tongue flicks
+      s.head.scale.setScalar(s.rMax / 0.0145);
       s.nextTongue -= dt;
       if (s.nextTongue <= 0 && s.state !== 'hidden') { s.tongueT = 0.001; s.nextTongue = (s.state === 'bask' ? 2 : 1) + R() * 4; }
       if (s.tongueT > 0) { s.tongueT += dt; const f = s.tongueT < 0.5 ? Math.abs(Math.sin(s.tongueT / 0.5 * Math.PI * 2)) : 0; s.tongue.scale.x = Math.max(0.001, f); if (s.tongueT > 0.5) { s.tongueT = 0; s.tongue.scale.x = 0.001; } }
       const vis = s.hidden < 0.98; s.body.visible = vis; s.head.visible = vis;
-      // wake while swimming
-      if (U.uDuck.value[s.slot]) { const w = s.wet > 0.5 && vis ? s.spd : 0; U.uDuck.value[s.slot].set(s.hd.x, s.hd.z, Math.cos(s.th) * w * 0.8, Math.sin(s.th) * w * 0.8); }
+      // ---- water shader data: 10 body points (head -> tail) + 6 points of the axis trail behind the tail with their age ----
+      const base = k * 16, inW = vis && s.wet > 0.05;
+      if (inW) {
+        for (let q = 0; q < 10; q++) { const nd = Pn[Math.round(q / 9 * (NODES - 1))]; snkU[base + q].set(nd.x, nd.z, 0, nd.y); }
+        // trail behind the tail
+        const tail = Pn[NODES - 1]; let acc = 0, idx = 0, pv = tail, emitted = 0; const sp = Math.max(0.08, s.spd);
+        for (let q = 0; q < s.axTrail.length && emitted < 6; q++) {
+          const a = s.axTrail[q], d0 = Math.hypot(a.x - s.ax.x, a.z - s.ax.z);
+          if (d0 < s.L * 0.82) continue;
+          acc += Math.hypot(a.x - pv.x, a.z - pv.z); pv = a; idx++;
+          if (idx % 6 === 0 || emitted === 0) { snkU[base + 10 + emitted].set(a.x, a.z, Math.min(3, acc / sp + 0.05), 0); emitted++; }
+        }
+        for (; emitted < 6; emitted++) snkU[base + 10 + emitted].copy(snkU[base + 10 + Math.max(0, emitted - 1)]);
+        let cx = 0, cz = 0; for (let q = 0; q < 16; q++) { cx += snkU[base + q].x; cz += snkU[base + q].y; } cx /= 16; cz /= 16;
+        let rad = 0; for (let q = 0; q < 16; q++) rad = Math.max(rad, Math.hypot(snkU[base + q].x - cx, snkU[base + q].y - cz));
+        snkB[k].set(cx, cz, rad + 0.05, Math.min(1, s.spd / 0.3) * sm(0.3, 0.8, s.wet));
+      } else snkB[k].set(0, 0, 0, 0);
     }
   }
-  function dispose() { for (const s of snakes) { for (const o of [s.body, s.head]) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); } s.tongue.geometry.dispose(); } for (let k = 6; k < 9; k++) if (U.uDuck.value[k]) U.uDuck.value[k].set(0, 0, 0, 0); }
+  function dispose() { for (const s of snakes) { for (const o of [s.body, s.head]) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); } s.tongue.geometry.dispose(); } for (const b of snkB) b.set(0, 0, 0, 0); }
   return { update, dispose, list: () => snakes };
 }

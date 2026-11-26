@@ -69,6 +69,7 @@ function foliageMats(Q) {
   return { mk, depth };
 }
 export function buildWorld(seed, Q) {
+  let Hmesh = null;
   let world_bake = () => {}, world_dispose = () => {};
   const R = rng(seed), N = makeNoise(seed), group = new THREE.Group();
   const meshes = {};
@@ -162,6 +163,21 @@ export function buildWorld(seed, Q) {
   tg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
   tg.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(tp.count), 1));
   tg.computeVertexNormals();
+  // height of the terrain mesh itself (piecewise-linear triangles), so small objects sit exactly on what is drawn
+  const hCache = new Map();
+  Hmesh = (x, z) => {
+    let lo = -1, hi = 1; for (let it = 0; it < 30; it++) { const m = (lo + hi) / 2; if (map(m) < x) lo = m; else hi = m; }
+    const fu = (lo + 1) / 2 * seg, ix = Math.max(0, Math.min(seg - 1, Math.floor(fu)));
+    const u0 = -1 + 2 * ix / seg, u1 = -1 + 2 * (ix + 1) / seg, x0 = map(u0), x1 = map(u1), tx = (x - x0) / (x1 - x0 || 1);
+    const zAt = (v, xx) => mapZ(v) + mz(xx) * shiftZ(v);
+    let vlo = -1, vhi = 1; for (let it = 0; it < 30; it++) { const m = (vlo + vhi) / 2; const zm = zAt(m, x0) * (1 - tx) + zAt(m, x1) * tx; if (zm < z) vlo = m; else vhi = m; }
+    const iy = Math.max(0, Math.min(seg - 1, Math.floor((vlo + 1) / 2 * seg))), v0 = -1 + 2 * iy / seg, v1 = -1 + 2 * (iy + 1) / seg;
+    const P = (i, j) => { const key = i * 4096 + j; let r = hCache.get(key); if (!r) { const u = -1 + 2 * i / seg, v = -1 + 2 * j / seg, xx = map(u), zz = zAt(v, xx); r = [xx, zz, H(xx, zz)]; if (hCache.size > 20000) hCache.clear(); hCache.set(key, r); } return r; };
+    const A = P(ix, iy), B = P(ix, iy + 1), Cq = P(ix + 1, iy + 1), D = P(ix + 1, iy);
+    const bary = (p, q, r) => { const d = (q[2 - 1] - r[1]) * (p[0] - r[0]) + (r[0] - q[0]) * (p[1] - r[1]); if (Math.abs(d) < 1e-12) return null; const l1 = ((q[1] - r[1]) * (x - r[0]) + (r[0] - q[0]) * (z - r[1])) / d, l2 = ((r[1] - p[1]) * (x - r[0]) + (p[0] - r[0]) * (z - r[1])) / d, l3 = 1 - l1 - l2; return [l1, l2, l3]; };
+    for (const [p, q, r] of [[A, B, D], [B, Cq, D]]) { const b = bary(p, q, r); if (b && b[0] > -1e-4 && b[1] > -1e-4 && b[2] > -1e-4) return b[0] * p[2] + b[1] * q[2] + b[2] * r[2]; }
+    return H(x, z);
+  };
   const terrainMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'terrain', 0, { DETAIL: '' });
   const terrain = new THREE.Mesh(tg, terrainMat);
   terrain.receiveShadow = true; group.add(terrain);
@@ -1238,7 +1254,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
+  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, Hmesh, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {
