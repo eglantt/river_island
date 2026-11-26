@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { makeNoise, rng } from './noise.js';
 import { makeFoliageAtlas, CardAcc, cardAxes, TILE, makeBark, TexAcc, leafGeo } from './foliage.js';
+import { growSkeleton, pipeRadii, skeletonTubes, tube, rootPath, samplePts } from './treegen.js';
 import { U, patch, waterMaterial, rainMaterial, pointsMaterial, mistMaterial, skyMaterial } from './shaders.js';
 
 const C = (h) => new THREE.Color(h);
@@ -318,176 +319,209 @@ export function buildWorld(seed, Q) {
   const barkAcc = { rough: new TexAcc(), birch: new TexAcc() };
   const leafInst = { oak: [], birch: [], willow: [] };
   const V3 = THREE.Vector3, _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _bx = new V3(), _by = new V3(), _bz = new V3();
-  // irregular tapered limb with uvs (bark tiles ~0.6 m)
-  function limbT(p0, p1, r0, r1, radial, hseg, irr) {
-    const D = new V3().subVectors(p1, p0), len = D.length();
-    const g = new THREE.CylinderGeometry(r1, r0, len, radial, hseg, true); g.translate(0, len / 2, 0);
-    const P = g.attributes.position, sd = R() * 50;
-    for (let i = 0; i < P.count; i++) {
-      const x = P.getX(i), y = P.getY(i), z = P.getZ(i), ang = Math.atan2(z, x);
-      const k = 1 + irr * (N.n2(Math.cos(ang) * 1.3 + sd, y * 1.4 + Math.sin(ang) * 1.3) * 0.7 + N.n2(Math.cos(ang) * 4 + sd, y * 5) * 0.3);
-      P.setXYZ(i, x * k, y, z * k);
+  // species: trunk height, crown envelope, growth parameters
+  const SPEC = {
+    birch: { h: [9, 11.5], rBase: 0.2, trunkF: 0.9, wob: 0.05, step: 0.32, di: 1.7, dk: 0.45, nPts: 750, persist: 0.6, kink: 0.12, elbowP: 0.15, elbow: 0.3, maxKids: 3, rTip: 0.007, flare: 0.45, flareK: 0.45, irr: 0.06,
+      env: (x, y, z, h) => { const dy = (y - h * 0.64) / (h * 0.33), rr = h * (0.17 + 0.05 * N.n2(x * 0.5 + 3, z * 0.5)); return y > h * 0.34 && (x * x + z * z) / (rr * rr) + dy * dy < 1; },
+      trop: (n) => new V3(0, n.out < 1.0 ? 0.35 : 0.35 - 0.7 * Math.min(1, (n.out - 1.0) / 1.6), 0) },
+    oak: { h: [8, 10], rBase: 0.36, trunkF: 0.3, wob: 0.1, step: 0.42, di: 2.5, dk: 0.65, nPts: 950, persist: 0.5, kink: 0.18, elbowP: 0.28, elbow: 0.5, maxKids: 3, rTip: 0.009, flare: 0.6, flareK: 0.75, irr: 0.13,
+      env: (x, y, z, h) => { const dy = (y - h * 0.6) / (h * 0.36), rr = h * (0.44 + 0.08 * N.n2(x * 0.3 + 7, z * 0.3 + y * 0.3)); return y > h * 0.3 && (x * x + z * z) / (rr * rr) + dy * dy < 1; },
+      trop: (n) => new V3(0, 0.1, 0) },
+    willow: { h: [9.5, 11.5], rBase: 0.4, trunkF: 0.27, wob: 0.08, step: 0.42, di: 2.5, dk: 0.65, nPts: 850, persist: 0.55, kink: 0.15, elbowP: 0.2, elbow: 0.4, maxKids: 3, rTip: 0.009, flare: 0.65, flareK: 0.8, irr: 0.15,
+      env: (x, y, z, h) => { const dy = (y - h * 0.52) / (h * 0.48), rr = h * (0.47 + 0.05 * N.n2(x * 0.3 + 1, z * 0.3)); return y > h * 0.33 && (x * x + z * z) / (rr * rr) + dy * dy < 1; },
+      trop: (n) => new V3(0, n.out < 2.5 ? 0.45 : 0.08, 0) },
+    dead: { h: [7, 9], rBase: 0.32, trunkF: 0.38, wob: 0.16, step: 0.4, di: 3.0, dk: 0.75, nPts: 320, persist: 0.45, kink: 0.24, elbowP: 0.38, elbow: 0.7, maxKids: 3, rTip: 0.012, flare: 0.6, flareK: 0.8, irr: 0.2, env: null,
+      trop: (n) => new V3(0, 0.22, 0) },
+  };
+  const deadTint = new THREE.Color(1.32, 1.3, 1.26);
+  // grow a skeleton for a species at local origin (base), returns {nodes, height}
+  function skeleton(kind, base, lean) {
+    const S = SPEC[kind], height = S.h[0] + R() * (S.h[1] - S.h[0]);
+    const trunk = []; let p = base.clone(), d = lean.clone();
+    const tl = height * S.trunkF * (kind === 'willow' || kind === 'oak' ? 0.85 + R() * 0.3 : 1), ns = Math.max(3, Math.round(tl / 0.4));
+    for (let i = 0; i <= ns; i++) {
+      trunk.push(p.clone());
+      d.add(new V3((R() - 0.5) * S.wob * 2, 0, (R() - 0.5) * S.wob * 2)); d.lerp(lean, 0.25).normalize();
+      p.addScaledVector(d, tl / ns);
     }
-    g.computeVertexNormals();
-    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new V3(0, 1, 0), D.normalize())); g.translate(p0.x, p0.y, p0.z);
-    return [g, Math.max(1, Math.round(Math.PI * 2 * (r0 + r1) / 2 / 0.6)), Math.max(0.3, len / 0.6)];
+    let env = S.env;
+    if (!env) { // dead tree: union of a few lopsided blobs
+      const blobs = Array.from({ length: 4 }, () => { const a = R() * 6.28, rr = height * (0.12 + R() * 0.25); return [Math.cos(a) * height * (0.1 + R() * 0.3), height * (0.5 + R() * 0.4), Math.sin(a) * height * (0.1 + R() * 0.3), height * (0.18 + R() * 0.12)]; });
+      env = (x, y, z) => y > height * 0.35 && blobs.some(([bx, by, bz, br]) => (x - bx) ** 2 + (y - by) ** 2 + (z - bz) ** 2 < br * br);
+    }
+    const ext = height * 0.75, ox = base.x + lean.x * height * 0.4, oz = base.z + lean.z * height * 0.4;
+    const pts = samplePts(R, S.nPts, [-ext, 0, -ext, ext, height, ext], (x, y, z) => env(x, y, z, height)).map((q) => q.add(new V3(ox, base.y, oz)));
+    const nodes = growSkeleton({ R, trunk, pts, step: S.step, di: S.di, dk: S.dk, maxIter: 220, maxNodes: 4500, persist: S.persist, kink: S.kink, elbowP: S.elbowP, elbow: S.elbow, maxKids: S.maxKids, trop: S.trop });
+    return { nodes, height, S };
+  }
+  const barkNoise = (a, b) => N.n2(a, b);
+  function emitBark(nodes, S, bt, colorFn, swayT, seed) {
+    const emit = (g, nd) => barkAcc[bt].add(g, colorFn(nd), swayT, 1, 1); emit.count = 0;
+    skeletonTubes(nodes, { noise: barkNoise, irr: S.irr, seed, flare: S.flare, flareK: S.flareK, twist: 0.12, uvScale: 0.6 }, emit);
+  }
+  function addRoots(base, S, bt, colorFn, n, swayT) {
+    for (let k = 0; k < n; k++) {
+      const [P, Rr] = rootPath(R, H, base.clone().add(new V3(0, 0.3, 0)), k / n * 6.28 + R() * 0.6, S.rBase * (0.38 + R() * 0.15), 1.2 + R() * 1.3);
+      const g = tube(P, Rr, { noise: barkNoise, irr: 0.12, seed: k * 5.1 + base.x, uvScale: 0.6 });
+      barkAcc[bt].add(g, colorFn(null), () => 0, 1, 1);
+    }
+  }
+  // break off a few limbs: cut subtrees and leave a jagged stub
+  function breakLimbs(nodes, count) {
+    for (let c = 0, t = 0; c < count && t < 200; t++) {
+      const i = 1 + Math.floor(R() * (nodes.length - 1)), nd = nodes[i];
+      if (nd.trunk || !nd.kids.length || nd.out < 0.6) continue;
+      nd.kids = []; nd.broken = true; c++;
+    }
   }
   function tree(x, z, kind) {
-    const g0 = H(x, z), base = new V3(x, g0 - 0.2, z);
-    const height = kind === 'birch' ? 6 + R() * 2.5 : kind === 'willow' ? 4.5 + R() * 1.5 : 4.5 + R() * 2;
-    const la = R() * Math.PI * 2, lt = kind === 'willow' ? 0.2 + R() * 0.15 : 0.08 * R();
+    const g0 = H(x, z), base = new V3(x, g0 - 0.3, z);
+    const la = R() * Math.PI * 2, lt = kind === 'willow' ? 0.12 + R() * 0.12 : kind === 'dead' ? 0.1 + R() * 0.15 : 0.05 * R();
     const lean = new V3(Math.sin(lt) * Math.cos(la), Math.cos(lt), Math.sin(lt) * Math.sin(la)).normalize();
-    const rBase = kind === 'birch' ? 0.17 : kind === 'willow' ? 0.32 : 0.28;
-    trunks.push([x, z, rBase + 0.25]);
-    const lc = leafCols[kind], bt = kind === 'birch' ? 'birch' : 'rough', bAcc = barkAcc[bt];
-    const tintB = kind === 'willow' ? C('#d2c6b0') : kind === 'oak' ? C('#cdbca4') : C('#ffffff');
-    const swayT = (v) => Math.max(0, (v.y - g0) / height) ** 2 * 0.35;
-    const barkFn = (v, n) => {
+    const { nodes, height, S } = skeleton(kind, base, lean);
+    if (kind === 'dead') breakLimbs(nodes, 4 + Math.floor(R() * 3));
+    pipeRadii(nodes, S.rTip, S.rBase);
+    nodes.forEach((nd) => { if (nd.broken) nd.r = nodes[nd.parent].r * 0.85; });
+    trunks.push([x, z, S.rBase + 0.25, kind, height]);
+    const bt = kind === 'birch' ? 'birch' : 'rough';
+    const tintB = kind === 'willow' ? C('#d2c6b0') : kind === 'oak' ? C('#cdbca4') : kind === 'dead' ? deadTint : C('#ffffff');
+    const swayT = (v) => Math.max(0, (v.y - g0) / height) ** 2 * (kind === 'dead' ? 0.1 : 0.3);
+    const twigBirch = C('#7a6252');
+    const colorFn = (nd) => (v, n) => {
       tmp.copy(tintB).multiplyScalar(0.8 + 0.25 * sm(g0, g0 + 1.5, v.y));
-      if (kind === 'birch') tmp.multiplyScalar(1 - 0.65 * sm(g0 + 0.9, g0 + 0.1, v.y)); // dark cracked base
-      else tmp.lerp(C('#56703a'), sm(g0 + 1.2, g0, v.y) * sm(0.1, -0.6, n.z) * 0.55); // moss low on the north side
+      if (kind === 'birch') {
+        tmp.multiplyScalar(1 - 0.65 * sm(g0 + 0.9, g0 + 0.1, v.y));
+        if (nd && nd.r < 0.045) tmp.lerp(twigBirch, sm(0.045, 0.015, nd.r) * 0.85);
+      } else if (kind === 'dead') tmp.multiplyScalar(0.85 + 0.25 * sm(-0.3, 0.8, n.y));
+      else tmp.lerp(C('#56703a'), sm(g0 + 1.2, g0, v.y) * sm(0.1, -0.6, n.z) * 0.55);
       return tmp;
     };
-    const addLimb = (p0, p1, r0, r1, radial, hseg, irr) => { const [g, us, vs] = limbT(p0, p1, r0, r1, radial, hseg, irr); bAcc.add(g, barkFn, swayT, us, vs); };
-    // root flare + surface roots
-    addLimb(base.clone().add(new V3(0, -0.25, 0)), base.clone().add(lean.clone().multiplyScalar(0.95)), rBase * (kind === 'birch' ? 1.45 : 1.9), rBase * 1.02, 12, 4, 0.22);
-    if (kind !== 'birch') {
-      const nr = 5 + Math.floor(R() * 2);
-      for (let k = 0; k < nr; k++) {
-        const a = k / nr * Math.PI * 2 + R() * 0.5, d = new V3(Math.cos(a), 0, Math.sin(a));
-        const p0 = base.clone().addScaledVector(d, rBase * 0.6).add(new V3(0, 0.45, 0));
-        const m = base.clone().addScaledVector(d, 0.55 + R() * 0.45); m.y = H(m.x, m.z) + 0.05;
-        const e = base.clone().addScaledVector(d.clone().applyAxisAngle(new V3(0, 1, 0), (R() - 0.5) * 0.6), 1.1 + R() * 0.9); e.y = H(e.x, e.z) - 0.12;
-        addLimb(p0, m, rBase * 0.42, rBase * 0.22, 7, 2, 0.15); addLimb(m, e, rBase * 0.22, 0.03, 5, 2, 0.1);
-        const jg = new THREE.SphereGeometry(rBase * 0.23, 6, 4); jg.translate(m.x, m.y, m.z); bAcc.add(jg, barkFn, () => 0, 1, 1);
-      }
-    }
-    const clusters = [], twigs = [];
-    function leaves(c, r, dir) { clusters.push([kind === 'willow' ? c.clone().add(new V3(0, -r * 0.35, 0)) : c.clone(), r, dir ? dir.clone() : new V3(0, 1, 0)]); }
-    function branch(p, dir, len, r, depth) {
-      const end = p.clone().addScaledVector(dir, len);
-      addLimb(p, end, r, r * 0.68, depth > 1 ? 10 : 6, depth > 1 ? 4 : 2, depth > 1 ? 0.12 : 0.05);
-      if (depth > 0) { const jg = new THREE.SphereGeometry(r * 0.72, depth > 1 ? 10 : 6, 6); jg.translate(end.x, end.y, end.z); bAcc.add(jg, barkFn, swayT, 1, 1); }
-      if (depth === 0) { leaves(end, (kind === 'birch' ? 0.94 : kind === 'willow' ? 0.95 : 1.15) + R() * 0.45, dir); return; }
-      const kids = kind === 'willow' ? (depth >= 2 ? 3 + (R() < 0.5 ? 1 : 0) : 3) : depth === 1 ? 3 : 2 + (R() < 0.5 ? 1 : 0);
-      for (let k = 0; k < kids; k++) {
-        const nd = kind === 'willow' && depth === 3
-          ? dir.clone().multiplyScalar(0.8).add(new V3(-dir.x * 1.6, 0.25, -dir.z * 1.6)).add(new V3((R() - 0.5) * 0.9, R() * 0.3, (R() - 0.5) * 0.9)).normalize()
-          : dir.clone().add(new V3((R() - 0.5) * 1.5, (kind === 'willow' ? 0.1 : 0.45) + R() * 0.4, (R() - 0.5) * 1.5)).normalize();
-        branch(end, nd, len * (kind === 'willow' && depth === 3 ? 0.75 : 0.62 + R() * 0.15), r * (kind === 'willow' && depth === 3 ? 0.68 : 0.62), depth - 1);
-        if (kind === 'willow' && depth <= 2 && R() < 0.6) {
-          const sd = dir.clone().add(new V3((R() - 0.5) * 2, -0.2, (R() - 0.5) * 2)).normalize(), se = end.clone().addScaledVector(sd, len * 0.45);
-          addLimb(end, se, r * 0.3, r * 0.12, 5, 1, 0.05);
-        }
-      }
-      if (depth === 1 && R() < 0.7) leaves(end, 0.9 + R() * 0.3, dir);
-    }
-    const hangPts = []; // points on willow wood where streamers attach
-    const woodC = C('#8c8c52'), twigC = C('#7a6e5a');
-    if (kind === 'willow') {
-      // trunk to the fork, then 4-6 scaffold limbs arching up-out and curving down like a fountain
-      const fork = base.clone().add(lean.clone().multiplyScalar(1.9 + R() * 0.6));
-      addLimb(base.clone().add(lean.clone().multiplyScalar(0.6)), fork, rBase, rBase * 0.82, 12, 4, 0.14);
-      const jg = new THREE.SphereGeometry(rBase * 0.85, 10, 6); jg.translate(fork.x, fork.y, fork.z); bAcc.add(jg, barkFn, swayT, 1, 1);
-      const arc = (p0, dir0, len, r0, r1, segs, rise, collect, depth) => {
-        let p = p0.clone(), d = dir0.clone(); const pts = [p.clone()];
-        for (let i = 0; i < segs; i++) {
-          const t = i / segs, q = p.clone().addScaledVector(d, len / segs);
-          const ra = r0 + (r1 - r0) * t, rb = r0 + (r1 - r0) * (t + 1 / segs);
-          addLimb(p, q, ra, rb, depth ? 8 : 5, 1, 0.06);
-          const j = new THREE.SphereGeometry(rb * 1.02, 6, 4); j.translate(q.x, q.y, q.z); bAcc.add(j, barkFn, swayT, 1, 1);
-          p = q; pts.push(p.clone());
-          d.y -= rise / segs; d.normalize(); // curve downward
-          if (collect && t > 0.05) for (let k = 0; k < 3; k++) hangPts.push(p.clone().lerp(pts[pts.length - 2], k / 3));
-        }
-        return pts;
-      };
-      const ns = 4 + Math.floor(R() * 3);
-      for (let k = 0; k < ns; k++) {
-        const a = k / ns * Math.PI * 2 + R() * 0.5, d0 = new V3(Math.cos(a) * 0.75, 0.75 + R() * 0.25, Math.sin(a) * 0.75).normalize();
-        const pts = arc(fork, d0, 3.0 + R() * 1.0, rBase * 0.55, rBase * 0.12, 7, 2.0 + R() * 0.6, true, 1);
-        for (let m = 0; m < 3; m++) { // second-order arching branches
-          const sp = pts[2 + Math.floor(R() * 3)], a2 = a + (R() - 0.5) * 1.6;
-          arc(sp, new V3(Math.cos(a2) * 0.8, 0.5 + R() * 0.3, Math.sin(a2) * 0.8).normalize(), 1.6 + R() * 0.9, rBase * 0.18, rBase * 0.06, 5, 1.6, true, 0);
-        }
-      }
-      hangPts.forEach((p) => clusters.push([p, 0.2, new V3(0, -1, 0)]));
-    } else branch(base.clone().add(lean.clone().multiplyScalar(0.6)), lean, height * 0.45, rBase, 2);
-    if (!clusters.length) return;
-    const cc = new V3(); clusters.forEach(([p]) => cc.add(p)); cc.multiplyScalar(1 / clusters.length);
-    let crad = 0; clusters.forEach(([p, r]) => { crad = Math.max(crad, p.distanceTo(cc) + r); });
+    emitBark(nodes, S, bt, colorFn, swayT, x * 0.37 + z);
+    addRoots(base, S, bt, colorFn, kind === 'birch' ? 3 : 5 + Math.floor(R() * 3), swayT);
+    if (kind === 'dead') return;
+    // leaf-bearing nodes: near the tips
+    const zone = kind === 'birch' ? 1.5 : kind === 'oak' ? 1.3 : 2.2;
+    const lnodes = nodes.filter((nd) => !nd.trunk && nd.tip < zone);
+    if (!lnodes.length) return;
+    const cc = new V3(); lnodes.forEach((nd) => cc.add(nd.p)); cc.multiplyScalar(1 / lnodes.length);
+    let crad = 0; lnodes.forEach((nd) => { crad = Math.max(crad, nd.p.distanceTo(cc)); }); crad += 0.6;
     const sw = (y) => 0.25 + 0.75 * Math.max(0, (y - g0) / height);
     if (Q.leafMode !== 'leaves') { // card crowns (fallback)
       const tile = kind === 'birch' ? TILE.birch : kind === 'willow' ? TILE.willow : TILE.oak;
       cardAcc.rad = crad;
-      for (let k = 0; k < Q.cards; k++) {
-        const [p0, r] = clusters[k % clusters.length], isIn = k < Q.cards * 0.4;
-        const out = p0.clone().sub(cc).add(new V3(R() - 0.5, (R() - 0.4) * 0.8, R() - 0.5)).normalize();
-        const p = p0.clone().addScaledVector(out, r * (isIn ? 0.1 + R() * 0.3 : 0.35 + R() * 0.45));
-        const size = r * (0.6 + R() * 0.3) * (kind === 'birch' ? 1.1 : 1), mode = kind === 'willow' && R() < 0.55 ? 'hang' : 'out';
+      for (let k = 0; k < Q.cards * 2; k++) {
+        const nd = lnodes[Math.floor(R() * lnodes.length)], out = nd.p.clone().sub(cc).normalize();
+        const size = 0.8 + R() * 0.4, mode = kind === 'willow' && R() < 0.6 ? 'hang' : 'out';
         const [ax, ay] = cardAxes(R, size, out, mode);
-        cardAcc.card(p, ax, ay, mode === 'hang' ? TILE.willow : (tile === TILE.oak && R() < 0.5 ? TILE.oak2 : tile), cc, tint(1), sw(p.y - size), sw(p.y + size), R() < 0.5);
+        cardAcc.card(nd.p.clone().addScaledVector(out, 0.3), ax, ay, mode === 'hang' ? TILE.willow : (tile === TILE.oak && R() < 0.5 ? TILE.oak2 : tile), cc, tint(1), sw(nd.p.y - size), sw(nd.p.y + size), R() < 0.5);
       }
       cardAcc.rad = 0; return;
     }
-    // individual leaves on twigs
-    const LCOL = lc.map((h) => C(h));
+    const LCOL = leafCols[kind].map((h) => C(h)), twigs = [];
     const putLeaf = (pos, ldir, nrm, s) => {
       _by.copy(ldir).normalize(); _bz.copy(nrm).addScaledVector(_by, -nrm.dot(_by)).normalize(); _bx.crossVectors(_by, _bz);
       _m4.makeBasis(_bx, _by, _bz); _m4.scale(new V3(s, s, s)); _m4.setPosition(pos);
       const d = Math.min(1, pos.distanceTo(cc) / crad), up = Math.max(-1, Math.min(1, (pos.y - cc.y) / crad));
-      const ao = (0.6 + 0.4 * Math.pow(d, 1.3)) * (0.85 + 0.15 * up);
+      const ao = (0.55 + 0.45 * Math.pow(d, 1.3)) * (0.85 + 0.15 * up);
       const c = LCOL[Math.floor(R() * LCOL.length)].clone().multiplyScalar(ao * (0.88 + R() * 0.24) * 1.02);
       if (R() < 0.04 && kind !== 'willow') c.lerp(C('#b8a640'), 0.6);
       leafInst[kind].push([_m4.clone(), c]);
     };
-    const total = Q.leaves * (kind === 'birch' ? 1.2 : kind === 'willow' ? 2.0 : 1.15);
+    const total = Q.leaves * (kind === 'birch' ? 1.7 : kind === 'willow' ? 4.2 : 2.3);
+    // weight outer nodes higher (the inside of a crown is shaded and bare)
+    const wOf = (nd) => 0.25 + Math.pow(Math.min(1, nd.p.distanceTo(cc) / crad), 2);
+    const cum = []; let wsum = 0; for (const nd of lnodes) { wsum += wOf(nd); cum.push(wsum); }
+    const pick = () => { const r = R() * wsum; let lo = 0, hi = cum.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (cum[m] < r) lo = m + 1; else hi = m; } return lnodes[lo]; };
     if (kind === 'willow') {
-      const nStreams = Math.round(total / 22);
+      const perStep = 3, nStreams = Math.round(total / 42);
       for (let s = 0; s < nStreams; s++) {
-        const start = hangPts[Math.floor(Math.pow(R(), 0.7) * hangPts.length)].clone();
-        const out = start.clone().sub(cc).setY(0).normalize(), L = Math.min(3.0, (start.y - g0) * (0.45 + R() * 0.5)), steps = 18 + Math.floor(R() * 8);
-        let p = start.clone(), prev = start.clone();
+        const nd = pick(), start = nd.p.clone();
+        const out = start.clone().sub(cc).setY(0); if (out.lengthSq() < 1e-4) out.set(R() - 0.5, 0, R() - 0.5); out.normalize();
+        const room = start.y - g0 - 0.7 - R() * 0.5; if (room < 0.5) continue;
+        const L = Math.min(4.5, room) * (0.6 + R() * 0.4), steps = 13 + Math.floor(R() * 5);
+        // short rise up-out, then the shoot falls
+        const rise = start.clone().addScaledVector(out, 0.12 + R() * 0.12).add(new V3(0, 0.1 + R() * 0.1, 0));
+        twigs.push([start, rise, 'shoot']);
+        let p = rise.clone(), last = rise.clone();
         for (let k = 0; k < steps; k++) {
-          const t = k / steps; prev.copy(p);
-          p.add(new V3(out.x * 0.05 * (1 - t), -L / steps, out.z * 0.05 * (1 - t)));
+          const t = k / steps, prev = p.clone();
+          p.add(new V3(out.x * 0.06 * (1 - t) * (1 - t), -L / steps, out.z * 0.06 * (1 - t) * (1 - t)));
           const d = new V3().subVectors(p, prev).normalize();
-          for (const side of [-1, 1]) {
-            const ld = d.clone().multiplyScalar(0.7).add(new V3(-d.z, 0, d.x).multiplyScalar(side * 0.7)).add(new V3(0, -0.2, 0)).normalize();
-            putLeaf(p, ld, out.clone().add(new V3(0, 0.3, 0)), 0.85 + R() * 0.3 - t * 0.25);
+          for (let q = 0; q < perStep; q++) {
+            const ang = (k * perStep + q) * 2.4, pp = prev.clone().lerp(p, (q + 0.5) / perStep);
+            const side = new V3(-d.z, 0, d.x).normalize().multiplyScalar(Math.cos(ang)).add(out.clone().multiplyScalar(Math.sin(ang)));
+            const ld = d.clone().multiplyScalar(0.8).addScaledVector(side, 0.55).normalize();
+            putLeaf(pp, ld, side.clone().add(new V3(0, 0.2, 0)), (1.1 + R() * 0.3) * (1 - t * 0.3));
           }
-          if (k % 3 === 2 || k === 0) twigs.push([k === 0 ? start.clone() : twigs.lastEnd || start.clone(), p.clone(), 'shoot']), twigs.lastEnd = p.clone();
+          if (k % 3 === 2 || k === steps - 1) { twigs.push([last, p.clone(), 'shoot']); last = p.clone(); }
         }
       }
     } else {
-      const perTwig = kind === 'birch' ? 10 : 8, nTw = Math.round(total / perTwig);
-      // sub-branches radiating from every branch end; twigs sit on them
-      const subs = clusters.map(([p0, r, bd]) => Array.from({ length: 7 }, () => {
-        const dir = p0.clone().sub(cc).normalize().add(bd.clone().multiplyScalar(0.6)).add(new V3(R() - 0.5, R() - 0.3, R() - 0.5).multiplyScalar(1.3)).normalize();
-        const e = p0.clone().addScaledVector(dir, r * (1.1 + R() * 0.9));
-        twigs.push([p0.clone(), e.clone(), 'sub']);
-        return [p0, e, dir];
-      }));
+      const perTwig = kind === 'birch' ? 12 : 9, nTw = Math.round(total / perTwig);
       for (let s = 0; s < nTw; s++) {
-        const ci = s % clusters.length, [sb0, sb1, sdir] = subs[ci][Math.floor(R() * 7)];
-        const out = sdir.clone().add(new V3(R() - 0.5, R() - 0.4, R() - 0.5).multiplyScalar(1.1)).normalize();
-        const start = sb0.clone().lerp(sb1, 0.3 + R() * 0.7);
-        const tlen = 0.45 + R() * 0.6, droop = kind === 'birch' ? 0.35 : 0.05;
-        const tdir = out.clone().add(new V3(0, -droop, 0)).normalize(), end = start.clone().addScaledVector(tdir, tlen);
-        twigs.push([start, end]);
+        const nd = pick(), start = nd.p.clone().lerp(nd.parent >= 0 ? nodes[nd.parent].p : nd.p, R() * 0.8);
+        const hz = nd.d.clone().setY(0); if (hz.lengthSq() < 1e-4) hz.set(R() - 0.5, 0, R() - 0.5);
+        hz.normalize().add(new V3(R() - 0.5, 0, R() - 0.5).multiplyScalar(1.4)).normalize();
+        let pts;
+        if (kind === 'birch') { // pendulous twig: short outward stretch then hanging
+          const L = 0.5 + R() * 0.6, a = start.clone().addScaledVector(hz, 0.18).add(new V3(0, 0.04, 0));
+          const b = a.clone().addScaledVector(hz, L * 0.25).add(new V3(0, -L * 0.45, 0)), c2 = b.clone().addScaledVector(hz, L * 0.08).add(new V3(0, -L * 0.5, 0));
+          pts = [start, a, b, c2];
+        } else { // oak: short, outward and up, slightly zigzag
+          const L = 0.35 + R() * 0.35, dir = hz.clone().add(new V3(0, 0.35 + R() * 0.4, 0)).normalize();
+          const a = start.clone().addScaledVector(dir, L * 0.5).add(new V3((R() - 0.5) * 0.08, 0, (R() - 0.5) * 0.08));
+          pts = [start, a, a.clone().addScaledVector(dir, L * 0.5)];
+        }
+        for (let k = 1; k < pts.length; k++) twigs.push([pts[k - 1], pts[k], kind === 'birch' ? 'btwig' : 'twig']);
         for (let k = 0; k < perTwig; k++) {
-          const t = (k + 0.5) / perTwig, pos = start.clone().lerp(end, t), side = k % 2 ? 1 : -1;
-          const perp = new V3().crossVectors(tdir, new V3(0, 1, 0)).normalize().multiplyScalar(side);
-          const ld = tdir.clone().multiplyScalar(0.55).add(perp).add(new V3(0, kind === 'birch' ? -0.35 : 0.1, 0)).normalize();
-          const nrm = new V3(0, 1, 0).add(out.clone().multiplyScalar(0.6)).add(new V3(R() - 0.5, R() - 0.5, R() - 0.5).multiplyScalar(0.7));
-          putLeaf(pos, ld, nrm, 1.0 + R() * 0.5);
+          const t = kind === 'birch' ? 0.15 + 0.85 * (k + 0.5) / perTwig : 0.35 + 0.65 * (k + 0.5) / perTwig;
+          const f = t * (pts.length - 1), si = Math.min(pts.length - 2, Math.floor(f)), pos = pts[si].clone().lerp(pts[si + 1], f - si);
+          const tdir = new V3().subVectors(pts[si + 1], pts[si]).normalize(), side = k % 2 ? 1 : -1;
+          const perp = new V3().crossVectors(tdir, new V3(0, 1, 0)); if (perp.lengthSq() < 1e-4) perp.copy(hz).cross(new V3(0, 1, 0)); perp.normalize().multiplyScalar(side);
+          const ld = kind === 'birch' ? tdir.clone().multiplyScalar(0.4).add(perp.clone().multiplyScalar(0.6)).add(new V3(0, -0.6, 0)).normalize()
+            : tdir.clone().multiplyScalar(0.55).add(perp).add(new V3(0, 0.1, 0)).normalize();
+          const nrm = (kind === 'birch' ? hz.clone().add(new V3(0, 0.5, 0)) : new V3(0, 1, 0).add(hz.clone().multiplyScalar(0.6))).add(new V3(R() - 0.5, R() - 0.5, R() - 0.5).multiplyScalar(0.7));
+          putLeaf(pos, ld, nrm, kind === 'birch' ? 1.0 + R() * 0.4 : 0.8 + R() * 0.3);
         }
       }
     }
+    const woodC = C('#8c8c52'), twigC = C('#7a6a58');
     for (const [a0, a1, kd] of twigs) {
-      const r0 = kd === 'sub' ? 0.035 : kd === 'shoot' ? 0.006 : 0.01, r1 = kd === 'sub' ? 0.012 : 0.004;
-      trunkAcc.add(limbGeo(a0, a1, r0, r1, 3, 1), () => (kd === 'shoot' ? woodC : twigC), swayT);
+      const r0 = kd === 'shoot' ? 0.006 : kd === 'btwig' ? 0.005 : 0.008, r1 = 0.003;
+      trunkAcc.add(limbGeo(a0, a1, r0, r1, 3, 1), () => (kd === 'shoot' ? woodC : kd === 'btwig' ? twigBirch : twigC), swayT);
     }
+  }
+  // a dead snag lying half in the water: skeleton grown upright, broken, then laid down
+  function snag(x, z, ang) {
+    const base0 = new V3(0, 0, 0), { nodes, S } = skeleton('dead', base0, new V3(0, 1, 0));
+    // keep only thick limbs
+    for (const nd of nodes) nd.kids = nd.kids.filter((k) => nodes[k].trunk || nodes[k].tip > 0.8 || nodes[k].kids.length);
+    breakLimbs(nodes, 6);
+    pipeRadii(nodes, 0.02, 0.34);
+    nodes.forEach((nd) => { if (nd.broken && nd.parent >= 0) nd.r = nodes[nd.parent].r * 0.85; });
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ang, -Math.PI / 2 - 0.08)), off = new V3(x, H(x, z) + 0.3, z);
+    for (const nd of nodes) nd.p.applyQuaternion(q).add(off);
+    const colorFn = () => (v, n) => tmp.copy(deadTint).multiplyScalar((0.75 + 0.3 * sm(-0.3, 0.9, n.y)) * (v.y < 0.05 ? 0.55 : 1));
+    emitBark(nodes, { ...S, flare: 0.5, flareK: 0.55 }, 'rough', colorFn, () => 0, x);
+    // root plate: thick roots fanned out in the plane perpendicular to the trunk, around a clod of earth
+    const ax = new V3(0, 1, 0).applyQuaternion(q), bpos = off.clone().addScaledVector(ax, 0.15);
+    const nRt = 10;
+    for (let k = 0; k < nRt; k++) {
+      const a = k / nRt * 6.28 + R() * 0.35, d = new V3(Math.cos(a), 0, Math.sin(a)).applyQuaternion(q).addScaledVector(ax, -0.15 - R() * 0.25).normalize();
+      const P = [], Rr = [], r0 = 0.2 + R() * 0.1, L = 1.5 + R() * 1.1; let p = bpos.clone(), dd = d.clone();
+      for (let i = 0; i <= 7; i++) {
+        P.push(p.clone()); Rr.push(Math.max(0.015, r0 * Math.pow(1 - i / 7, 0.9)));
+        dd.add(new V3(R() - 0.5, R() - 0.5, R() - 0.5).multiplyScalar(0.45)).addScaledVector(ax, 0.04).add(new V3(0, -0.13, 0)).normalize();
+        p.addScaledVector(dd, L / 7);
+      }
+      barkAcc.rough.add(tube(P, Rr, { noise: barkNoise, irr: 0.18, seed: k * 3.3, uvScale: 0.6 }), colorFn(), () => 0, 1, 1);
+    }
+    const clod = blobGeo(N, bpos.clone().addScaledVector(ax, -0.35), 0.85, 1, 1, 0.4);
+    { const P = clod.attributes.position, v = new V3(), c = bpos.clone().addScaledVector(ax, -0.35);
+      for (let i = 0; i < P.count; i++) { v.fromBufferAttribute(P, i).sub(c); const a = v.dot(ax); v.addScaledVector(ax, -a * 0.6); P.setXYZ(i, c.x + v.x, c.y + v.y, c.z + v.z); }
+      clod.computeVertexNormals(); }
+    trunkAcc.add(clod, (v) => tmp.copy(C('#4a3c2e')).multiplyScalar(0.75 + 0.35 * N.n2(v.x * 5, v.y * 5 + v.z * 3)), () => 0);
+    trunks.push([x, z, 0.6, 'snag', 3]);
   }
   {
     const nT = 3 + Math.floor(R() * 3), kinds = ['willow', 'birch', 'oak', 'birch', 'willow'];
@@ -495,22 +529,33 @@ export function buildWorld(seed, Q) {
       let s = null;
       for (let t = 0; t < 40 && !s; t++) {
         const c = randIsland(i === 0 ? 0.9 : 0.75);
-        if (c && trunks.every(([x, z]) => Math.hypot(x - c[0], z - c[1]) > 6)) s = c;
+        if (c && trunks.every(([x, z]) => Math.hypot(x - c[0], z - c[1]) > 7.5)) s = c;
       }
       if (s) tree(s[0], s[1], kinds[i]);
+    }
+    { // a dead tree near the island shore
+      let s = null;
+      for (let t = 0; t < 200 && !s; t++) { const c = randIsland(0.9, 50); if (c && islandE(c[0], c[1]) > 0.62 && trunks.every(([x, z]) => Math.hypot(x - c[0], z - c[1]) > 6)) s = c; }
+      if (s) tree(s[0], s[1], 'dead');
+    }
+    { // a snag lying half in the water at the edge of the sand bar
+      const [sx, sz] = sbC(), dz = -sbSide;
+      let x = sx - sbL * 0.25, z = sz;
+      for (let k = 0; k < 60; k++) { if (H(x, z) < -0.15) break; z += dz * 0.3; }
+      snag(x - 0.5, z - dz * 1.2, sbSide * Math.PI / 2 + (R() - 0.5) * 0.6);
     }
     for (const bt of ['rough', 'birch']) {
       if (!barkAcc[bt].p.length) continue;
       const m = new THREE.Mesh(barkAcc[bt].build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true, map: barkTex[bt] }), 'barkT', 0.32));
       m.castShadow = true; m.receiveShadow = true; group.add(m);
     }
-    const LG = { oak: leafGeo(0.14, 0.055, 'oak'), birch: leafGeo(0.1, 0.045, 'oak'), willow: leafGeo(0.16, 0.03, 'willow') };
+    const LG = { oak: leafGeo(0.14, 0.055, 'oak'), birch: leafGeo(0.1, 0.045, 'oak'), willow: leafGeo(0.16, 0.038, 'willow') };
     const leafMatI = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'leafI', 0.32, { FOLI: '', LEAFI: '' });
     for (const kd of ['oak', 'birch', 'willow']) {
       const L = leafInst[kd]; if (!L.length) continue;
       const im = new THREE.InstancedMesh(LG[kd], leafMatI, L.length);
       L.forEach(([mm, c], i) => { im.setMatrixAt(i, mm); im.setColorAt(i, c); });
-      im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.castShadow = true; im.receiveShadow = true; group.add(im);
+      im.userData.leaf = true; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.castShadow = true; im.receiveShadow = true; group.add(im);
     }
     // bushes
     const nB = 9 + Math.floor(R() * 7);

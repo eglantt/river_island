@@ -12,7 +12,7 @@ import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.17';
+const VERSION = '0.0.18';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
