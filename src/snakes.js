@@ -203,10 +203,13 @@ export function createSnakes(world, Q, scene) {
     }
     return pts;
   };
+  // arr[0] is a live point that follows the head; once it is minD away from the last fixed point (arr[1]) it gets
+  // fixed and a new live point starts. Comparing with arr[0] instead would never fix points at high frame rates.
   const pushTrail = (arr, x, z, minD, max, y = 0) => {
-    const l = arr[0];
-    if (!l || Math.hypot(x - l.x, z - l.z) > minD) { arr.unshift(new V(x, y, z)); if (arr.length > max) arr.length = max; }
-    else { l.x = x; l.z = z; l.y = y; }
+    const l = arr[0], f = arr[1];
+    if (!l) { arr.unshift(new V(x, y, z)); return; }
+    l.x = x; l.z = z; l.y = y;
+    if (!f || Math.hypot(x - f.x, z - f.z) > minD) { arr.unshift(new V(x, y, z)); if (arr.length > max) arr.length = max; }
   };
   // sample a polyline (starting at p0, then arr[0..]) by arclength into out[]
   const sampleTrail = (p0x, p0z, arr, ds, out, p0y = 0) => {
