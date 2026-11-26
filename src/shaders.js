@@ -10,6 +10,7 @@ export const U = {
   uZen: { value: new THREE.Color() }, uHor: { value: new THREE.Color() }, uGlow: { value: new THREE.Color() },
   uSunCol: { value: new THREE.Color() }, uCloudLit: { value: new THREE.Color() }, uCloudDark: { value: new THREE.Color() },
   uAmb: { value: new THREE.Color() }, uWet: { value: 0 }, uRain: { value: 0 }, uFlash: { value: 0 },
+  uDuck: { value: Array.from({ length: 6 }, () => new THREE.Vector4(0, 0, 0, 0)) },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
   uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
@@ -267,7 +268,7 @@ export function waterMaterial() {
       #include <fog_pars_fragment>
       uniform sampler2D tNoise, tWaterN, tDepth, tHzn; uniform vec2 uCloudOff, uWindDir; uniform float uCover, uDark, uSunVis, uTime, uRain, uWind, uMoonVis, uFlash, uNight, uSunOcc, uMoonOcc;
       uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog; uniform float uFogSky;
-      uniform vec4 uRip[4]; uniform vec4 uDepthBox, uRiver, uBolt;
+      uniform vec4 uRip[4]; uniform vec4 uDuck[6]; uniform vec4 uDepthBox, uRiver, uBolt;
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
       float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -288,10 +289,30 @@ export function waterMaterial() {
         vec2 nxy = n1.xy*0.55 + n2.xy*0.35*(0.5+uWind) + n3.xy*0.5;
         // rain ripples
         if (uRain > 0.01) {
-          vec2 g = vWp.xz / 0.7; vec2 id = floor(g);
-          float rnd = h21(id); float t = fract(uTime*0.9 + rnd);
-          vec2 c = (id + 0.25 + 0.5*vec2(h21(id+3.1), h21(id+7.7))) * 0.7;
-          if (rnd < uRain) nxy += ripple(vWp.xz, c, t*0.9, 0.55) * (1.0 - t);
+          // each drop's ring stays within 0.75 m, so the 3x3 neighbourhood sees every ring: no cell seams
+          vec2 g0 = floor(vWp.xz / 0.7);
+          for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            vec2 id = g0 + vec2(float(i), float(j));
+            float rnd = h21(id); if (rnd >= uRain) continue;
+            float t = fract(uTime*0.9 + rnd);
+            vec2 c = (id + 0.25 + 0.5*vec2(h21(id+3.1), h21(id+7.7))) * 0.7;
+            vec2 dv = vWp.xz - c; float d = length(dv), r = t*0.55;
+            float w = sin((d - r)*22.0) * exp(-abs(d - r)*9.0) * (1.0 - t) * (1.0 - t) * 0.5 * smoothstep(0.75, 0.55, d);
+            if (d > 0.001) nxy += dv/d * w;
+          }
+        }
+        // duck wakes: a small bow ring and a V of waves trailing behind each swimming duck
+        for (int i = 0; i < 6; i++) {
+          vec2 vel = uDuck[i].zw; float spd = length(vel); if (spd < 0.01) continue;
+          vec2 fwd = vel / spd, lat = vec2(-fwd.y, fwd.x), dv = vWp.xz - uDuck[i].xy;
+          float along = -dot(dv, fwd), l = dot(dv, lat), al = abs(l), dd = length(dv);
+          if (dd > 6.0) continue;
+          float k = min(1.0, spd / 0.3);
+          float arm = al - max(along, 0.0) * 0.36 - 0.12;
+          float vW = sin(arm * 38.0 - uTime * 5.0) * exp(-arm * arm * 30.0) * step(-0.15, along) * exp(-max(along, 0.0) * 0.55) * k;
+          nxy += lat * sign(l) * vW * 0.5;
+          float ring = sin((dd - 0.24) * 40.0 - uTime * 6.0) * exp(-(dd - 0.26) * (dd - 0.26) * 60.0) * k;
+          nxy += dv / max(dd, 0.001) * ring * 0.15;
         }
         for (int i = 0; i < 4; i++) { float age = uTime - uRip[i].z; if (age > 0.0 && age < 4.0) nxy += ripple(vWp.xz, uRip[i].xy, age, uRip[i].w); }
         float flt = smoothstep(30.0, 220.0, dist);
@@ -333,7 +354,10 @@ export function waterMaterial() {
           float hx = vWp.x + R.x*tz;
           float th = 15.0 + 9.0*texture2D(tNoise, vec2(hx*0.004, side*0.3)).g + 7.0*texture2D(tNoise, vec2(hx*0.017, 0.2)).r;
           float hy = R.y * tz;
-          float tree = smoothstep(th + 1.5, th - 1.5, hy);
+          // use a calmer normal for the forest line and a soft edge, so wind waves don't punch hard sky patches
+          vec3 Rs = reflect(-V, normalize(vec3(nxy.x * 0.35, 1.0, nxy.y * 0.35))); Rs.y = abs(Rs.y);
+          float hs = Rs.y * (bankZ - vWp.z) / (Rs.z + side * 1e-4), ew = 2.5 + fwidth(hs) * 2.0;
+          float tree = smoothstep(th + ew, th - ew, hs);
           vec3 forest = uAmb * vec3(0.16, 0.24, 0.13) * 1.6 + uSunCol*uSunVis*uSunOcc*vec3(0.06,0.08,0.03);
           refl = mix(refl, forest, tree * 0.92);
         }
