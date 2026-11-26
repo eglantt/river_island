@@ -87,7 +87,8 @@ export function makeFoliageAtlas(size) {
         const ex = bx + L * 0.55, ey = by + sd * L * 0.65; twig(bx, by, ex, ey, 1.6 * s, 'rgba(50,40,28,1)');
         for (let i = 0; i < 30; i++) {
           const u = i / 30, px = bx + (ex - bx) * u, py = by + (ey - by) * u, nl = (7 + 6 * (1 - u)) * s;
-          for (const q of [-1, 1]) { g.strokeStyle = hsl(115 + R() * 30, 22 + R() * 14, 17 + R() * 15 + (1 - Math.abs(sd * 0.5)) * 4); g.lineWidth = 1.3 * s; g.beginPath(); g.moveTo(px, py); g.lineTo(px + nl * 0.7, py + q * nl * 0.7); g.stroke(); }
+          const tipK = u > 0.72 && t > 0.15 ? (u - 0.72) / 0.28 : 0; // young light-green growth at the shoot tips
+          for (const q of [-1, 1]) { g.strokeStyle = hsl(115 + R() * 30 - tipK * 30, 22 + R() * 14 + tipK * 18, 17 + R() * 15 + (1 - Math.abs(sd * 0.5)) * 4 + tipK * 14); g.lineWidth = 1.3 * s; g.beginPath(); g.moveTo(px, py); g.lineTo(px + nl * 0.7, py + q * nl * 0.7); g.stroke(); }
         }
       }
     }

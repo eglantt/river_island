@@ -895,28 +895,69 @@ export function buildWorld(seed, Q) {
   // bank forest (instanced conifers + broadleaves; foliage cards; simpler geometry far away)
   {
     const trunkC = C('#4a3a2a'), V3 = THREE.Vector3;
-    const conT = new Acc(), decT = new Acc();
-    conT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 11.6, 0), 0.24, 0.025, 5, 3), () => trunkC, () => 0);
-    for (let k = 0; k < 4; k++) { const a = k * 1.7 + 0.4, y = 0.9 + k * 0.35; conT.add(limbGeo(new V3(0, y, 0), new V3(Math.cos(a) * 0.7, y - 0.1, Math.sin(a) * 0.7), 0.035, 0.01, 3, 1), () => trunkC, () => 0); }
+    const decT = new Acc();
     decT.add(limbGeo(new V3(0, -0.5, 0), new V3(0, 4.2, 0), 0.3, 0.16, 5, 1), () => trunkC, () => 0);
     for (let k = 0; k < 3; k++) { const a = k * 2.1; decT.add(limbGeo(new V3(0, 3.6, 0), new V3(Math.cos(a) * 1.3, 5.6, Math.sin(a) * 1.3), 0.12, 0.05, 4, 1), () => trunkC, () => 0); }
-    const conifer = (levels, per, bare, slim, dense) => {
-      const acc = new CardAcc(), top = 11.2, y0 = bare;
-      for (let l = 0; l < levels; l++) {
-        const t = l / (levels - 1), y = y0 + t * (top - 0.7 - y0);
-        const nPer = Math.max(3, Math.round(per * (1 - t * 0.45)));
-        const baseLen = (3.0 * Math.pow(1 - t, 0.85) * slim + 0.35);
+    // spruce (Picea abies): irregular whorls, upper branches rise, middle level, lower droop; side shoots hang as a comb
+    // beneath each bough; ragged outline (random lengths, gaps); spire with a leader; dead twigs on the bare lower trunk.
+    // o: { lv: whorls, per: branches per whorl, bare: bare trunk fraction, slim: crown width, dense, crook: top bend, young }
+    const spruce = (o) => {
+      const acc = new CardAcc(), tr = new Acc(), top = 11.2, deadC = C('#6a635a'), barkC = C('#4e4034');
+      // trunk axis with a slight sway and an optional crooked top
+      const ca = R() * 6.28, axis = (y) => { const t = y / top; return new V3(Math.sin(y * 0.35 + ca) * 0.06 + Math.cos(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12, y, Math.cos(y * 0.31 + ca) * 0.06 + Math.sin(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12); };
+      for (let k = 0; k < 8; k++) { const y0 = -0.5 + k / 8 * (top + 0.6), y1 = -0.5 + (k + 1) / 8 * (top + 0.6); tr.add(limbGeo(axis(y0), axis(y1), 0.26 * (1 - k / 8) ** 0.9 + 0.025, 0.26 * (1 - (k + 1) / 8) ** 0.9 + 0.02, 5, 1), () => barkC, () => 0); }
+      const y0 = top * o.bare + 0.4;
+      let y = y0, wi = 0; const step = (top - 0.7 - y0) / (Q.spruceLv * (o.young ? 1.1 : 1));
+      const bough = (base, ang, L, t, tilt) => {
+        const elev = t > 0.72 ? 0.25 + (t - 0.72) * 1.6 : t > 0.4 ? 0.05 - (0.72 - t) * 0.2 : -0.12 - (0.4 - t) * 0.9; // radians
+        const e = elev + tilt, dir = new V3(Math.cos(ang) * Math.cos(e), Math.sin(e), Math.sin(ang) * Math.cos(e));
+        const side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
+        const roll = (R() - 0.5) * 0.5, col = tint((0.88 + t * 0.25) * (0.88 + R() * 0.22));
+        // flat spray along the bough
+        const ay = side.clone().multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(L * 0.52 * o.dense);
+        acc.card(base.clone().addScaledVector(dir, L / 2 + 0.05), dir.clone().multiplyScalar(L / 2 + 0.05), ay, TILE.spruce, axis(base.y), col, base.y * 0.012, (base.y + 0.4) * 0.016, R() < 0.5);
+        // hanging comb below the bough (lower and middle crown)
+        if (t < 0.78 && L > 0.9 && R() < 0.75) {
+          const hang = up.clone().multiplyScalar(-1).addScaledVector(dir, 0.15).normalize(), hl = L * (0.16 + 0.1 * (1 - t));
+          acc.card(base.clone().addScaledVector(dir, L * 0.55).addScaledVector(hang, hl * 0.9), dir.clone().multiplyScalar(L * 0.42), hang.multiplyScalar(hl), TILE.spruce, axis(base.y), col.clone().multiplyScalar(0.85), base.y * 0.012, base.y * 0.014, R() < 0.5);
+        }
+      };
+      while (y < top - 0.7) {
+        const t = (y - y0) / (top - 0.7 - y0), lump = 0.82 + R() * 0.33;
+        const nPer = Math.max(3, Math.round(o.per * (1 - t * 0.4) + (R() - 0.5) * 2)), rot = wi * 2.4;
+        const maxL = (3.0 * Math.pow(1 - t, 0.9) * o.slim + 0.3) * (o.young ? 0.85 : 1);
         for (let k = 0; k < nPer; k++) {
-          const a = (k + R() * 0.6) / nPer * Math.PI * 2 + l * 0.9, len = baseLen * (0.75 + R() * 0.45);
-          const droop = (0.45 - t * 0.75) * (0.8 + R() * 0.4);
-          const dir = new V3(Math.cos(a), -droop, Math.sin(a)).normalize(), base = new V3(0, y, 0);
-          const c = base.clone().addScaledVector(dir, len / 2 + 0.08), side = new V3(-dir.z, 0, dir.x).normalize(), up = new V3().crossVectors(side, dir).normalize();
-          const roll = (R() < 0.5 ? -1 : 1) * (0.7 + R() * 0.45);
-          const ay = side.multiplyScalar(Math.cos(roll)).addScaledVector(up, Math.sin(roll)).multiplyScalar(len * 0.4 * dense);
-          acc.card(c, dir.clone().multiplyScalar(len / 2 + 0.08), ay, TILE.spruce, base, tint((0.8 + t * 0.35) * (0.9 + R() * 0.2)), y * 0.012, (y + 0.4) * 0.016);
+          if (R() < 0.08 && t < 0.85) continue; // gaps in the crown
+          const ang = rot + (k + (R() - 0.5) * 0.7) / nPer * Math.PI * 2, L = maxL * lump * (0.7 + R() * 0.5);
+          bough(axis(y), ang, L, t, (R() - 0.5) * 0.15);
+        }
+        // intermediate branches between whorls
+        if (R() < (Q.spruceLv > 14 ? 0.4 : 0.15) && t < 0.85) { const yi = y + 0.2, ang = R() * 6.28; bough(axis(yi), ang, maxL * (0.45 + R() * 0.3), t, -0.05); }
+        y += step * (0.75 + R() * 0.5) * (t > 0.8 ? 0.75 : 1); wi++;
+      }
+      // spire: small upright sprays and the leader
+      for (let k = 0; k < 4; k++) { const a = k * 1.6 + R(), yy = top - 0.65 + k * 0.08; bough(axis(yy), a, 0.35 - k * 0.05, 0.95, 0.2); }
+      { const b = axis(top - 0.55), tp = axis(top + 0.25), d = tp.clone().sub(b), sd = new V3(1, 0, 0).multiplyScalar(0.07);
+        acc.card(b.clone().addScaledVector(d, 0.5), d.clone().multiplyScalar(0.5), sd, TILE.spruce, null, tint(1.05), top * 0.012, top * 0.017); }
+      // dead twigs on the bare trunk (forest trees)
+      if (o.bare > 0.12) {
+        for (let yy = 1.2; yy < y0; yy += 0.5 + R() * 0.4) {
+          const n = 1 + Math.floor(R() * 2.5);
+          for (let k = 0; k < n; k++) {
+            const a = R() * 6.28, L = 0.35 + R() * 0.8 * (yy / y0 + 0.3), d = new V3(Math.cos(a), -0.15 - R() * 0.3, Math.sin(a)).normalize(), b0 = axis(yy), b1 = b0.clone().addScaledVector(d, L);
+            tr.add(limbGeo(b0, b1, 0.018, 0.005, 3, 1), () => deadC, () => 0);
+            if (L > 0.7 && R() < 0.5) { const m = b0.clone().lerp(b1, 0.55), d2 = d.clone().add(new V3((R() - 0.5), 0.3, (R() - 0.5))).normalize(); tr.add(limbGeo(m, m.clone().addScaledVector(d2, L * 0.35), 0.007, 0.003, 3, 1), () => deadC, () => 0); }
+          }
         }
       }
-      return acc.build();
+      // dark inner core: the shaded inside of the crown seen through gaps between boughs
+      { const cy0 = y0 + 0.3, h = top - 0.9 - cy0, rb = (3.0 * o.slim + 0.3) * 0.3;
+        const cone = new THREE.ConeGeometry(rb, h, 6, 2, true).translate(0, cy0 + h / 2, 0);
+        const P = cone.attributes.position; for (let i = 0; i < P.count; i++) { const yy = P.getY(i), q = axis(yy); P.setX(i, P.getX(i) * (0.85 + R() * 0.3) + q.x); P.setZ(i, P.getZ(i) * (0.85 + R() * 0.3) + q.z); }
+        cone.computeVertexNormals();
+        tr.add(cone, (v) => tmp.copy(C('#2e4a32')).multiplyScalar(0.85 + 0.35 * (v.y - cy0) / h), () => 0); }
+      acc.rad = 0;
+      return [tr.build(), acc.build()];
     };
     const broad = (n, ry, spread) => {
       const acc = new CardAcc(), cc = new V3(0, 5.4 * ry, 0), nin = Math.round(n * 0.4);
@@ -929,10 +970,18 @@ export function buildWorld(seed, Q) {
       }
       return acc.build();
     };
-    const conV = [[Q.spruceLv, Q.sprucePer, 1.4, 1.0, 1.0], [Q.spruceLv + 2, Q.sprucePer, 2.2, 0.85, 0.9], [Q.spruceLv - 2, Q.sprucePer + 1, 0.9, 1.15, 1.1], [Q.spruceLv, Q.sprucePer - 1, 2.8, 0.75, 0.85]]
-      .slice(0, Q.variants).map((v) => conifer(...v));
+    const SPV = [
+      { lv: 0, per: Q.sprucePer, bare: 0.24, slim: 0.95, dense: 1.0, crook: 0 },          // mature forest spruce
+      { lv: 0, per: Q.sprucePer + 1, bare: 0.04, slim: 1.08, dense: 1.1, crook: 0, young: true }, // dense to the ground
+      { lv: 0, per: Q.sprucePer - 1, bare: 0.36, slim: 0.72, dense: 0.9, crook: 0.03 },   // tall slender, bare below
+      { lv: 0, per: Q.sprucePer, bare: 0.16, slim: 0.88, dense: 1.0, crook: 0.08 },        // crooked top
+      { lv: 0, per: Q.sprucePer + 1, bare: 0.1, slim: 1.15, dense: 1.05, crook: 0 },       // broad
+      { lv: 0, per: Q.sprucePer - 1, bare: 0.3, slim: 0.82, dense: 0.95, crook: 0.02 },
+    ];
+    const nCV = Math.min(SPV.length, Q.variants + 2);
+    const conV = SPV.slice(0, nCV).map((o) => spruce(o));
     const decV = [[Q.forestCards, 1.0, 1.0], [Q.forestCards, 1.15, 0.85], [Q.forestCards, 0.9, 1.2]].slice(0, Math.max(2, Q.variants - 1)).map((v) => broad(...v));
-    const conFar = conifer(10, 6, 1.6, 1.05, 1.25), decFar = broad(Math.round(Q.forestCards * 0.4), 1.0, 1.0);
+    const conFar = spruce({ per: 5, bare: 0.1, slim: 1.0, dense: 1.3, crook: 0 }), decFar = broad(Math.round(Q.forestCards * 0.4), 1.0, 1.0);
     const fmat = FM.mk('forestfol', 0.25);
     const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'forest', 0.25);
     const ftint = new THREE.Color();
@@ -948,7 +997,7 @@ export function buildWorld(seed, Q) {
         if ((R() < pc) !== con) continue;
         const s = (0.75 + R() * 0.7) * (far ? 1.35 : 1);
         d.position.set(x, h, z); d.rotation.set((R() - 0.5) * 0.08, R() * 6.28, (R() - 0.5) * 0.08); d.scale.set(s, s * (0.85 + R() * 0.4), s);
-        return ftint.setHSL(con ? 0.28 : 0.2 + R() * 0.06, 0.12 + R() * 0.12, 0.45 + R() * 0.1).multiplyScalar(2.1);
+        return con ? ftint.setHSL(0.27 + R() * 0.06, 0.1 + R() * 0.14, 0.5 + R() * 0.1).multiplyScalar(2.15) : ftint.setHSL(0.2 + R() * 0.06, 0.12 + R() * 0.12, 0.45 + R() * 0.1).multiplyScalar(2.1);
       }
       return null;
     };
@@ -961,10 +1010,10 @@ export function buildWorld(seed, Q) {
       fm.instanceMatrix.needsUpdate = true; if (fm.instanceColor) fm.instanceColor.needsUpdate = true; group.add(fm);
       return [tm, fm];
     };
-    const ctB = conT.build(), dtB = decT.build();
-    meshes.con = conV.map((g) => pair(ctB, g, Math.round(Q.forest * 0.55 / conV.length), true, false));
+    const dtB = decT.build();
+    meshes.con = conV.map(([tg, g]) => pair(tg, g, Math.round(Q.forest * 0.55 / conV.length), true, false));
     meshes.dec = decV.map((g) => pair(dtB, g, Math.round(Q.forest * 0.45 / decV.length), false, false));
-    meshes.conF = pair(ctB, conFar, Math.round(Q.far * 0.55), true, true);
+    meshes.conF = pair(conFar[0], conFar[1], Math.round(Q.far * 0.55), true, true);
     meshes.decF = pair(dtB, decFar, Math.round(Q.far * 0.45), false, true);
   }
 
