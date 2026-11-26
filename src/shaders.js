@@ -72,12 +72,12 @@ gl_Position = projectionMatrix * mvPosition;
 export function patch(mat, key, amp = 0, defs = {}) {
   mat.defines = Object.assign({}, mat.defines || {}, defs);
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
+    for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
-    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
+    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <alphatest_fragment>', `#ifdef CARD
         { vec3 fn = normalize(cross(dFdx(vWp), dFdy(vWp))); vec3 vd = normalize(cameraPosition - vWp); diffuseColor.a *= smoothstep(0.06, 0.32, abs(dot(fn, vd))); }
       #endif
@@ -152,6 +152,9 @@ export function patch(mat, key, amp = 0, defs = {}) {
             outgoingLight += diffuseColor.rgb * uSunCol * back * 0.9 * uSunVis * uSunOcc * (1.0 - cs * 0.6);
             outgoingLight *= 1.0 - uWet * 0.15;
           }
+        #endif
+        #ifdef LEAFI
+          outgoingLight = max(outgoingLight, diffuseColor.rgb * (uAmb * 1.15 + uSunCol * uSunVis * uSunOcc * 0.3)); // underside never goes black
         #endif
         #ifdef GUST
           outgoingLight *= 0.86 + 0.32*vGust;

@@ -340,7 +340,7 @@ export function buildWorld(seed, Q) {
     const rBase = kind === 'birch' ? 0.17 : kind === 'willow' ? 0.32 : 0.28;
     trunks.push([x, z, rBase + 0.25]);
     const lc = leafCols[kind], bt = kind === 'birch' ? 'birch' : 'rough', bAcc = barkAcc[bt];
-    const tintB = kind === 'willow' ? C('#a59a88') : kind === 'oak' ? C('#a89784') : C('#ffffff');
+    const tintB = kind === 'willow' ? C('#d2c6b0') : kind === 'oak' ? C('#cdbca4') : C('#ffffff');
     const swayT = (v) => Math.max(0, (v.y - g0) / height) ** 2 * 0.35;
     const barkFn = (v, n) => {
       tmp.copy(tintB).multiplyScalar(0.8 + 0.25 * sm(g0, g0 + 1.5, v.y));
@@ -382,7 +382,37 @@ export function buildWorld(seed, Q) {
       }
       if (depth === 1 && R() < 0.7) leaves(end, 0.9 + R() * 0.3, dir);
     }
-    if (kind === 'willow') branch(base.clone().add(lean.clone().multiplyScalar(0.6)), lean, height * 0.33, rBase, 3); else branch(base.clone().add(lean.clone().multiplyScalar(0.6)), lean, height * 0.45, rBase, 2);
+    const hangPts = []; // points on willow wood where streamers attach
+    const woodC = C('#8c8c52'), twigC = C('#7a6e5a');
+    if (kind === 'willow') {
+      // trunk to the fork, then 4-6 scaffold limbs arching up-out and curving down like a fountain
+      const fork = base.clone().add(lean.clone().multiplyScalar(1.9 + R() * 0.6));
+      addLimb(base.clone().add(lean.clone().multiplyScalar(0.6)), fork, rBase, rBase * 0.82, 12, 4, 0.14);
+      const jg = new THREE.SphereGeometry(rBase * 0.85, 10, 6); jg.translate(fork.x, fork.y, fork.z); bAcc.add(jg, barkFn, swayT, 1, 1);
+      const arc = (p0, dir0, len, r0, r1, segs, rise, collect, depth) => {
+        let p = p0.clone(), d = dir0.clone(); const pts = [p.clone()];
+        for (let i = 0; i < segs; i++) {
+          const t = i / segs, q = p.clone().addScaledVector(d, len / segs);
+          const ra = r0 + (r1 - r0) * t, rb = r0 + (r1 - r0) * (t + 1 / segs);
+          addLimb(p, q, ra, rb, depth ? 8 : 5, 1, 0.06);
+          const j = new THREE.SphereGeometry(rb * 1.02, 6, 4); j.translate(q.x, q.y, q.z); bAcc.add(j, barkFn, swayT, 1, 1);
+          p = q; pts.push(p.clone());
+          d.y -= rise / segs; d.normalize(); // curve downward
+          if (collect && t > 0.05) for (let k = 0; k < 3; k++) hangPts.push(p.clone().lerp(pts[pts.length - 2], k / 3));
+        }
+        return pts;
+      };
+      const ns = 4 + Math.floor(R() * 3);
+      for (let k = 0; k < ns; k++) {
+        const a = k / ns * Math.PI * 2 + R() * 0.5, d0 = new V3(Math.cos(a) * 0.75, 0.75 + R() * 0.25, Math.sin(a) * 0.75).normalize();
+        const pts = arc(fork, d0, 3.0 + R() * 1.0, rBase * 0.55, rBase * 0.12, 7, 2.0 + R() * 0.6, true, 1);
+        for (let m = 0; m < 3; m++) { // second-order arching branches
+          const sp = pts[2 + Math.floor(R() * 3)], a2 = a + (R() - 0.5) * 1.6;
+          arc(sp, new V3(Math.cos(a2) * 0.8, 0.5 + R() * 0.3, Math.sin(a2) * 0.8).normalize(), 1.6 + R() * 0.9, rBase * 0.18, rBase * 0.06, 5, 1.6, true, 0);
+        }
+      }
+      hangPts.forEach((p) => clusters.push([p, 0.2, new V3(0, -1, 0)]));
+    } else branch(base.clone().add(lean.clone().multiplyScalar(0.6)), lean, height * 0.45, rBase, 2);
     if (!clusters.length) return;
     const cc = new V3(); clusters.forEach(([p]) => cc.add(p)); cc.multiplyScalar(1 / clusters.length);
     let crad = 0; clusters.forEach(([p, r]) => { crad = Math.max(crad, p.distanceTo(cc) + r); });
@@ -411,13 +441,12 @@ export function buildWorld(seed, Q) {
       if (R() < 0.04 && kind !== 'willow') c.lerp(C('#b8a640'), 0.6);
       leafInst[kind].push([_m4.clone(), c]);
     };
-    const total = Q.leaves * (kind === 'birch' ? 1.2 : 1);
+    const total = Q.leaves * (kind === 'birch' ? 1.2 : kind === 'willow' ? 2.0 : 1.15);
     if (kind === 'willow') {
       const nStreams = Math.round(total / 22);
       for (let s = 0; s < nStreams; s++) {
-        const [p0, r] = clusters[s % clusters.length];
-        const start = p0.clone().add(new V3((R() - 0.5) * r * 2.4, (R() - 0.2) * r * 1.0, (R() - 0.5) * r * 2.4));
-        const out = start.clone().sub(cc).setY(0).normalize(), L = 1.0 + R() * 2.0, steps = 18 + Math.floor(R() * 8);
+        const start = hangPts[Math.floor(Math.pow(R(), 0.7) * hangPts.length)].clone();
+        const out = start.clone().sub(cc).setY(0).normalize(), L = Math.min(3.0, (start.y - g0) * (0.45 + R() * 0.5)), steps = 18 + Math.floor(R() * 8);
         let p = start.clone(), prev = start.clone();
         for (let k = 0; k < steps; k++) {
           const t = k / steps; prev.copy(p);
@@ -427,15 +456,22 @@ export function buildWorld(seed, Q) {
             const ld = d.clone().multiplyScalar(0.7).add(new V3(-d.z, 0, d.x).multiplyScalar(side * 0.7)).add(new V3(0, -0.2, 0)).normalize();
             putLeaf(p, ld, out.clone().add(new V3(0, 0.3, 0)), 0.85 + R() * 0.3 - t * 0.25);
           }
-          if (k % 3 === 0) twigs.push([prev.clone(), p.clone()]);
+          if (k % 3 === 2 || k === 0) twigs.push([k === 0 ? start.clone() : twigs.lastEnd || start.clone(), p.clone(), 'shoot']), twigs.lastEnd = p.clone();
         }
       }
     } else {
       const perTwig = kind === 'birch' ? 10 : 8, nTw = Math.round(total / perTwig);
+      // sub-branches radiating from every branch end; twigs sit on them
+      const subs = clusters.map(([p0, r, bd]) => Array.from({ length: 7 }, () => {
+        const dir = p0.clone().sub(cc).normalize().add(bd.clone().multiplyScalar(0.6)).add(new V3(R() - 0.5, R() - 0.3, R() - 0.5).multiplyScalar(1.3)).normalize();
+        const e = p0.clone().addScaledVector(dir, r * (1.1 + R() * 0.9));
+        twigs.push([p0.clone(), e.clone(), 'sub']);
+        return [p0, e, dir];
+      }));
       for (let s = 0; s < nTw; s++) {
-        const [p0, r, bd] = clusters[s % clusters.length];
-        const out = p0.clone().sub(cc).add(bd.clone().multiplyScalar(0.5)).add(new V3(R() - 0.5, R() - 0.35, R() - 0.5).multiplyScalar(1.4)).normalize();
-        const sp = kind === 'birch' ? 2.4 : 2.1, start = p0.clone().add(new V3((R() - 0.5) * r * sp, (R() - 0.45) * r * sp * 0.75, (R() - 0.5) * r * sp));
+        const ci = s % clusters.length, [sb0, sb1, sdir] = subs[ci][Math.floor(R() * 7)];
+        const out = sdir.clone().add(new V3(R() - 0.5, R() - 0.4, R() - 0.5).multiplyScalar(1.1)).normalize();
+        const start = sb0.clone().lerp(sb1, 0.3 + R() * 0.7);
         const tlen = 0.45 + R() * 0.6, droop = kind === 'birch' ? 0.35 : 0.05;
         const tdir = out.clone().add(new V3(0, -droop, 0)).normalize(), end = start.clone().addScaledVector(tdir, tlen);
         twigs.push([start, end]);
@@ -448,7 +484,10 @@ export function buildWorld(seed, Q) {
         }
       }
     }
-    for (const [a0, a1] of twigs) { const [g, us, vs] = limbT(a0, a1, 0.012, 0.005, 3, 1, 0); bAcc.add(g, barkFn, swayT, us, vs); }
+    for (const [a0, a1, kd] of twigs) {
+      const r0 = kd === 'sub' ? 0.035 : kd === 'shoot' ? 0.006 : 0.01, r1 = kd === 'sub' ? 0.012 : 0.004;
+      trunkAcc.add(limbGeo(a0, a1, r0, r1, 3, 1), () => (kd === 'shoot' ? woodC : twigC), swayT);
+    }
   }
   {
     const nT = 3 + Math.floor(R() * 3), kinds = ['willow', 'birch', 'oak', 'birch', 'willow'];
@@ -465,8 +504,8 @@ export function buildWorld(seed, Q) {
       const m = new THREE.Mesh(barkAcc[bt].build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true, map: barkTex[bt] }), 'barkT', 0.32));
       m.castShadow = true; m.receiveShadow = true; group.add(m);
     }
-    const LG = { oak: leafGeo(0.2, 0.075, 'oak'), birch: leafGeo(0.12, 0.055, 'oak'), willow: leafGeo(0.16, 0.022, 'willow') };
-    const leafMatI = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'leafI', 0.32, { FOLI: '' });
+    const LG = { oak: leafGeo(0.14, 0.055, 'oak'), birch: leafGeo(0.1, 0.045, 'oak'), willow: leafGeo(0.16, 0.03, 'willow') };
+    const leafMatI = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'leafI', 0.32, { FOLI: '', LEAFI: '' });
     for (const kd of ['oak', 'birch', 'willow']) {
       const L = leafInst[kd]; if (!L.length) continue;
       const im = new THREE.InstancedMesh(LG[kd], leafMatI, L.length);
@@ -660,6 +699,7 @@ export function buildWorld(seed, Q) {
     });
   }
   // reeds along all shores (island + near banks)
+  const spawn0 = [irx * 0.8 * ca, zc0 + irx * 0.8 * sa];
   const reedPts = [], reedClusters = [];
   {
     // clump centres: island shoreline and both river banks
@@ -689,13 +729,33 @@ export function buildWorld(seed, Q) {
     };
     const g = bladeGeo(0.08, 5, C('#a2a85a'), C('#3e5a2a'), 0.25);
     {
-      const secs = [[R() * 6.28, 0.35 + R() * 0.2], [R() * 6.28, 0.25 + R() * 0.2]];
-      meshes.reedIsle = instanced(g, reedMat, Math.round(Q.reedWall * 0.45), (d) => {
+      // march outward along rays from the island centre: find the band from waterline (h 0.15) to ~0.55 m deep
+      const ray = (ang) => {
+        const dx = Math.cos(ang), dz = Math.sin(ang); let inner = null, outer = null;
+        for (let d = 3; d < 60; d += 0.25) { const x = dx * d, z = zc0 + dz * d, h = H(x, z); if (!inner && h < 0.15) inner = d; if (inner && h < -0.55) { outer = d; break; } }
+        return inner && outer ? [inner, outer] : null;
+      };
+      const NA = 120, bands = []; for (let i = 0; i < NA; i++) bands.push(ray(i / NA * Math.PI * 2));
+      const spA = Math.atan2(spawn0[1] - zc0, spawn0[0]);
+      const cand = [];
+      for (let i = 0; i < NA; i++) {
+        let sc = 0, ok = true; for (let k = -3; k <= 3; k++) { const bd = bands[(i + k + NA) % NA]; if (!bd) { ok = false; break; } sc += bd[1] - bd[0]; }
+        if (!ok) continue;
+        const a = i / NA * Math.PI * 2, near = Math.abs(Math.atan2(Math.sin(a - spA), Math.cos(a - spA)));
+        cand.push([i, sc + (near < 0.9 ? 25 : 0)]);
+      }
+      cand.sort((p, q) => q[1] - p[1]);
+      const arcs = [];
+      for (const [i] of cand) { if (arcs.every((j) => Math.min(Math.abs(i - j), NA - Math.abs(i - j)) > 14)) arcs.push(i); if (arcs.length >= 3) break; }
+      if (arcs.length) meshes.reedIsle = instanced(g, reedMat, Q.reedIsle * arcs.length, (d) => {
         for (let t = 0; t < 40; t++) {
-          const [a0, span] = secs[Math.floor(R() * 2)], a = a0 + (R() - 0.5) * span, e = 1.0 + R() * 0.22;
-          const u = Math.cos(a) * irx * e, v = Math.sin(a) * irz * e, x = u * ca - v * sa, z = zc0 + u * sa + v * ca, h = H(x, z);
-          if (h > 0.2 || h < -0.55) continue;
-          d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.12, R() * 6.28, (R() - 0.5) * 0.12); d.scale.set(1 + R() * 0.6, 1.5 + R() * 1.3, 1);
+          const i = arcs[Math.floor(R() * arcs.length)], off = (R() + R() + R() - 1.5) * 4.2, fi = i + off, ang = fi / NA * Math.PI * 2, bd = bands[((Math.round(fi) % NA) + NA) % NA];
+          if (!bd) continue;
+          const dd = bd[0] + Math.pow(R(), 0.8) * (bd[1] - bd[0]), x = Math.cos(ang) * dd, z = zc0 + Math.sin(ang) * dd, h = H(x, z);
+          if (h > 0.2 || h < -0.6) continue;
+          d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.14, R() * 6.28, (R() - 0.5) * 0.14); const tap = Math.max(0.35, 1 - Math.pow(Math.abs(off) / 6.3, 2) * 0.75), edge = Math.min(1, (dd - bd[0]) / 1.2 + 0.45);
+          if (R() > Math.max(0.25, tap)) continue;
+          d.scale.set(1 + R() * 0.6, (1.6 + R() * 1.4) * tap * edge * (0.7 + R() * 0.45), 1);
           return white;
         }
         return null;
@@ -866,9 +926,16 @@ export function buildWorld(seed, Q) {
   // ---------- water lilies in the calm water below the sand bar ----------
   {
     const [sx, sz] = sbC(), spots = [];
+    for (let t = 0; t < 400 && spots.length < 3; t++) { // calm water a few metres off the downstream end of the island
+      const ang = (R() - 0.5) * 2.6, dx = Math.cos(ang), dz = Math.sin(ang);
+      for (let d = 4; d < 70; d += 0.5) {
+        const x = dx * d, z = zc0 + dz * d, h = H(x, z);
+        if (h < -0.4) { const x2 = x + dx * 1.5, z2 = z + dz * 1.5, h2 = H(x2, z2); if (h2 < -0.3 && h2 > -1.4 && spots.every(([p, q]) => Math.hypot(p - x2, q - z2) > 7)) spots.push([x2, z2]); break; }
+      }
+    }
     for (let t = 0; t < 3000 && spots.length < 4; t++) {
       const x = sx + (R() - 0.2) * 90, z = sz + (R() - 0.5) * 50, h = H(x, z);
-      if (h < -0.3 && h > -1.1 && spots.every(([a, b]) => Math.hypot(a - x, b - z) > 9)) spots.push([x, z]);
+      if (h < -0.3 && h > -1.1 && spots.every(([p, q]) => Math.hypot(p - x, q - z) > 9)) spots.push([x, z]);
     }
     if (spots.length) {
       const pad = new THREE.CircleGeometry(1, 14, 0.25, Math.PI * 2 - 0.5); pad.rotateX(-Math.PI / 2);
@@ -879,8 +946,8 @@ export function buildWorld(seed, Q) {
       meshes.pads = instanced(pad, padMat, Q.lily, (d) => {
         for (let t = 0; t < 20; t++) {
           const s = spots[Math.floor(R() * spots.length)], x = s[0] + (R() - 0.5) * 9, z = s[1] + (R() - 0.5) * 7, h = H(x, z);
-          if (h > -0.25 || h < -1.3 || pads.some(([a, b, r]) => Math.hypot(a - x, b - z) < r + 0.25)) continue;
-          const r = 0.3 + R() * 0.32; pads.push([x, z, r]);
+          if (h > -0.25 || h < -1.6 || pads.some(([a, b, r]) => Math.hypot(a - x, b - z) < r + 0.25)) continue;
+          const r = 0.5 + R() * 0.4; pads.push([x, z, r]);
           d.position.set(x, 0.012, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(r, 1, r);
           return tint.setHSL(0.27 + (R() - 0.5) * 0.05, 0.55, 0.28 + R() * 0.08);
         }
@@ -901,9 +968,9 @@ export function buildWorld(seed, Q) {
       g.setAttribute('sway', new THREE.Float32BufferAttribute(sw, 1)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
       const fMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true }), 'lily', 0, { LILY: '', NOFLIP: '' });
       const pinks = [C('#ffffff'), C('#fff4f8'), C('#ffc7dc')];
-      meshes.lilies = instanced(g, fMat, Math.ceil(Q.lily / 4), (d) => {
+      meshes.lilies = instanced(g, fMat, Math.ceil(Q.lily / 2), (d) => {
         if (!pads.length) return null; const p = pads[Math.floor(R() * pads.length)];
-        d.position.set(p[0] + (R() - 0.5) * 0.1, 0.012, p[1] + (R() - 0.5) * 0.1); d.rotation.set(0, R() * 6.28, 0); const s = 1 + R() * 0.4; d.scale.set(s, s, s);
+        d.position.set(p[0] + (R() - 0.5) * 0.1, 0.012, p[1] + (R() - 0.5) * 0.1); d.rotation.set(0, R() * 6.28, 0); const s = 1.7 + R() * 0.6; d.scale.set(s, s, s);
         return pinks[Math.floor(R() * pinks.length)].clone().multiplyScalar(1.15);
       });
       meshes.lilies.renderOrder = 3;
