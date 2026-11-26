@@ -7,15 +7,29 @@ import { patch } from './shaders.js';
 export function createDucks(world, Q, scene) {
   const R = rng(9191), { H, N } = world, n = Q.ducks;
   const C = (h) => new THREE.Color(h), tmp = new THREE.Color();
-  const acc = new Acc(), V = THREE.Vector3;
-  const cBody = C('#7a6650'), cBreast = C('#6b4a35'), cHead = C('#2f5a3a'), cBeak = C('#d9b23a'), cTail = C('#2a2622'), cWing = C('#8a8a86');
-  acc.add(blobGeo(N, new V(0, 0.06, 0), 0.13, 0.62, 1, 0.06).scale(1.65, 1, 1), (v) => tmp.copy(v.x > 0.08 ? cBreast : cBody).lerp(cWing, v.y > 0.1 && Math.abs(v.z) > 0.05 ? 0.4 : 0), () => 0);
-  acc.add(blobGeo(N, new V(0.2, 0.17, 0), 0.058, 1, 1, 0.03), () => cHead, () => 0);
-  acc.add(new THREE.ConeGeometry(0.022, 0.07, 6).rotateZ(-Math.PI / 2).translate(0.27, 0.16, 0), () => cBeak, () => 0);
-  acc.add(new THREE.ConeGeometry(0.04, 0.09, 5).rotateZ(Math.PI / 2 + 0.5).translate(-0.24, 0.1, 0), () => cTail, () => 0);
-  const geo = acc.build();
-  const mesh = new THREE.InstancedMesh(geo, patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'duck', 0), Math.max(1, n));
-  mesh.frustumCulled = false; mesh.renderOrder = 3; mesh.material.transparent = true; scene.add(mesh);
+  const V = THREE.Vector3;
+  // mallard: body, neck, elongated head, broad flat spatulate bill
+  function duckGeo(drake) {
+    const acc = new Acc();
+    const cBody = C(drake ? '#8f8a82' : '#7a6448'), cBreast = C(drake ? '#5a3324' : '#6e5236'), cHead = C(drake ? '#1f5a36' : '#6b5238'), cBill = C(drake ? '#c9b24a' : '#b9773a'), cTail = C(drake ? '#1d1d1f' : '#4a3a2a'), cWing = C(drake ? '#6f6a62' : '#5e4a34');
+    const mott = (c, v) => tmp.copy(c).multiplyScalar(drake ? 1 : 0.85 + 0.3 * N.n2(v.x * 60, v.z * 60 + v.y * 40));
+    acc.add(blobGeo(N, new V(0, 0.06, 0), 0.13, 0.6, 1, 0.05).scale(1.7, 1, 1), (v) => mott(v.x > 0.1 ? cBreast : (v.y > 0.1 && Math.abs(v.z) > 0.05 ? cWing : cBody), v), () => 0);
+    // neck: short tilted cylinder from the breast up to the head, white ring on the drake
+    const neck = new THREE.CylinderGeometry(0.032, 0.045, 0.11, 8, 3).rotateZ(-0.35).translate(0.19, 0.15, 0);
+    acc.add(neck, (v) => (drake && Math.abs(v.y - 0.125) < 0.008 ? C('#f2f2ee') : mott(v.y > 0.13 ? cHead : cBreast, v)), () => 0);
+    // head: elongated, slightly flattened, gentle forehead
+    const head = new THREE.SphereGeometry(0.05, 12, 8).scale(1.45, 0.85, 0.82).translate(0.245, 0.215, 0);
+    acc.add(head, (v) => mott(cHead, v), () => 0);
+    // bill: broad, flat, rounded tip
+    const bill = new THREE.SphereGeometry(0.04, 10, 6, 0, Math.PI * 2, 0, Math.PI).scale(1.6, 0.28, 0.62).rotateZ(-0.18).translate(0.31, 0.198, 0);
+    acc.add(bill, () => cBill, () => 0);
+    acc.add(new THREE.ConeGeometry(0.045, 0.09, 6).rotateZ(Math.PI / 2 + 0.55).translate(-0.25, 0.1, 0), () => cTail, () => 0);
+    return acc.build();
+  }
+  const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'duck', 0); mat.transparent = true;
+  const drakeM = new THREE.InstancedMesh(duckGeo(true), mat, 1), henM = new THREE.InstancedMesh(duckGeo(false), mat, Math.max(1, n - 1));
+  for (const mm of [drakeM, henM]) { mm.frustumCulled = false; mm.renderOrder = 3; scene.add(mm); }
+  const setM = (i, m4) => (i === 0 ? drakeM.setMatrixAt(0, m4) : henM.setMatrixAt(i - 1, m4));
   const tints = [new THREE.Color(1, 1, 1), new THREE.Color(1.15, 1.05, 0.9)];
   const water = (x, z) => { const h = H(x, z); return h < -0.3 && h > -1.4; };
   const spot = () => {
@@ -32,10 +46,8 @@ export function createDucks(world, Q, scene) {
   };
   const leader = { p: spot(), tgt: spot(), dir: new V(1, 0, 0) };
   const ducks = Array.from({ length: n }, (_, i) => {
-    mesh.setColorAt(i, tints[i === 0 ? 0 : 1]);
     return { p: leader.p.clone().add(new V(-i * 0.6, 0, (i % 2 ? 1 : -1) * 0.3)), yaw: 0, dive: 0, diveT: 8 + R() * 30, s: 1, ph: R() * 6 };
   });
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   let night = false, roostP = null;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new V(), tv = new V();
   function update(dt, t, env) {
@@ -67,10 +79,10 @@ export function createDucks(world, Q, scene) {
       const y = Math.sin(t * 2 + k.ph) * 0.008 - div * 0.32;
       e.set(0, k.yaw, -div * 1.0, 'YZX'); q.setFromEuler(e);
       const s = k.s * (1 - (k.dive > 0.35 && k.dive < 2.85 ? 1 : 0)) + 1e-4;
-      m.compose(new V(k.p.x, y, k.p.z), q, sc.set(s, s, s)); mesh.setMatrixAt(i, m);
+      m.compose(new V(k.p.x, y, k.p.z), q, sc.set(s, s, s)); setM(i, m);
     }
-    mesh.instanceMatrix.needsUpdate = true;
+    drakeM.instanceMatrix.needsUpdate = true; henM.instanceMatrix.needsUpdate = true;
   }
-  function dispose() { mesh.geometry.dispose(); mesh.material.dispose(); scene.remove(mesh); }
-  return { update, dispose };
+  function dispose() { for (const mm of [drakeM, henM]) { mm.geometry.dispose(); scene.remove(mm); } mat.dispose(); }
+  return { update, dispose, pos: () => leader.p, dir: () => leader.dir };
 }

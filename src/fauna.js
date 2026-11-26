@@ -65,6 +65,9 @@ export function createFauna(world, Q, scene) {
   const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.Float32BufferAttribute([-0.2, 0, 0, 0.25, 0, 0, -0.05, 0, 1], 3)); bg.computeVertexNormals();
   const birdMat = new THREE.MeshBasicMaterial({ color: '#25242a', side: THREE.DoubleSide });
   const birds = new THREE.InstancedMesh(bg, birdMat, NBird * 2); birds.frustumCulled = false; group.add(birds);
+  // a lone gull gliding low along the river now and then
+  const gullM = new THREE.InstancedMesh(bg, new THREE.MeshLambertMaterial({ color: '#e8e6e0', side: THREE.DoubleSide }), 2); gullM.frustumCulled = false; group.add(gullM);
+  let gullT = 20 + R() * 30, gullDir = 1;
   const bd = Array.from({ length: NBird }, (_, i) => ({ off: new V((R() - 0.5) * 26, (R() - 0.5) * 8, (R() - 0.5) * 26), ph: R() * 10, p: new V(), prev: new V() }));
 
   // ---------- fish ----------
@@ -156,15 +159,25 @@ export function createFauna(world, Q, scene) {
         flap = Math.sin(t * 22 + b.ph) * 0.9; sc = 0.22;
       } else {
         const k = t * 0.045;
-        b.p.set(Math.cos(k) * 260 + b.off.x + Math.sin(t * 0.3 + b.ph) * 3, 55 + Math.sin(k * 2.3) * 12 + b.off.y, mz(Math.cos(k) * 260) + Math.sin(k) * 150 + b.off.z);
+        b.p.set(Math.cos(k) * 150 + b.off.x * 0.6 + Math.sin(t * 0.3 + b.ph) * 3, 26 + Math.sin(k * 2.3) * 9 + b.off.y * 0.6, zc0 + Math.sin(k) * 95 + b.off.z * 0.6);
         const glide = Math.sin(t * 0.5 + b.ph) > 0.4;
-        flap = glide ? 0.15 : Math.sin(t * 9 + b.ph) * 0.7; sc = 0.75;
+        flap = glide ? 0.15 : Math.sin(t * 9 + b.ph) * 0.7; sc = 1.15;
       }
       tmpV.subVectors(b.p, b.prev); const yaw = Math.atan2(-tmpV.z, tmpV.x);
       const s = i < nAct ? sc : 1e-4;
       setWing(birds, i * 2, b.p, yaw, 0, 1, flap, s); setWing(birds, i * 2 + 1, b.p, yaw, 0, -1, flap, s);
     }
     birds.instanceMatrix.needsUpdate = true;
+    // gull pass: ~40 s along the river, then a pause
+    gullT -= dt;
+    const gu = gullT < 0 ? Math.min(1, -gullT / 40) : -1;
+    if (gu >= 1) { gullT = 30 + R() * 60; gullDir = -gullDir; }
+    const gx = gullDir * (-320 + 640 * Math.max(0, gu)), gs = gu >= 0 && gu < 1 && env.birds > 0.3 ? 1.1 : 1e-4;
+    const gp = new V(gx, 9 + Math.sin(t * 0.6) * 3, mz(gx) + Math.sin(t * 0.21) * 12), gnx = gx + gullDir;
+    const gyaw = Math.atan2(-(mz(gnx) - mz(gx)), gullDir);
+    const gfl = Math.sin(t * 0.7) > 0.3 ? Math.sin(t * 7) * 0.6 : 0.12;
+    setWing(gullM, 0, gp, gyaw, 0, 1, gfl, gs); setWing(gullM, 1, gp, gyaw, 0, -1, gfl, gs);
+    gullM.instanceMatrix.needsUpdate = true;
 
     // fish
     if (jump) {

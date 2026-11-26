@@ -77,7 +77,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
-    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
+    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
       #ifdef DETAIL
         {
@@ -118,6 +118,20 @@ export function patch(mat, key, amp = 0, defs = {}) {
           outgoingLight = mix(outgoingLight, haze, f);
         #endif
         #ifdef DETAIL
+          if (vWp.y < -0.02) {
+            float uw = smoothstep(-0.02, -0.25, vWp.y);
+            float peb = texture2D(tNoise, vWp.xz * 2.7).a, peb2 = texture2D(tNoise, vWp.xz * 6.1 + 0.3).r;
+            float stones = smoothstep(0.62, 0.7, peb) * 0.6 + smoothstep(0.66, 0.72, peb2) * 0.4;
+            float ripple = 0.5 + 0.5 * sin(dot(vWp.xz, vec2(3.1, 1.3)) + texture2D(tNoise, vWp.xz * 0.2).r * 6.0);
+            float weed = smoothstep(0.55, 0.75, texture2D(tNoise, vWp.xz * 0.11 + 0.5).g);
+            vec3 bed = outgoingLight * (0.88 + 0.16 * ripple);
+            bed = mix(bed, outgoingLight * vec3(0.55, 0.58, 0.55), stones * 0.7);
+            bed = mix(bed, outgoingLight * vec3(0.45, 0.7, 0.32), weed * 0.6);
+            float ca = texture2D(tNoise, vWp.xz * 0.45 + vec2(uTime * 0.03, uTime * 0.017)).r, cb = texture2D(tNoise, vWp.xz * 0.52 - vec2(uTime * 0.021, -uTime * 0.025)).g;
+            float caus = pow(max(1.0 - abs(ca - cb) * 2.2, 0.0), 6.0);
+            bed += uSunCol * caus * 0.35 * uSunVis * uSunOcc * smoothstep(-1.5, -0.1, vWp.y);
+            outgoingLight = mix(outgoingLight, bed, uw);
+          }
           float dn = texture2D(tNoise, vWp.xz*0.19).a*0.55 + texture2D(tNoise, vWp.xz*0.83).g*0.45;
           outgoingLight *= 0.74 + 0.5*dn;
           outgoingLight *= 1.0 - uWet*0.32*smoothstep(-0.5, 0.6, vWp.y + 1.0);
@@ -330,7 +344,8 @@ export function waterMaterial() {
         float foam = smoothstep(0.22, 0.0, depth + (fn - 0.5)*0.18) * (0.55 + 0.45*sin(uTime*1.6 + depth*30.0 + fn*6.0));
         col = mix(col, (uAmb + uSunCol*uSunVis)*0.75, clamp(foam, 0.0, 1.0)*0.6);
         col += vec3(0.75, 0.8, 1.0) * uFlash * 0.5;
-        float alpha = clamp(mix(0.4, 0.97, smoothstep(0.0, 1.4, depth)) + fres*0.5 + foam*0.4, 0.0, 1.0);
+        float clearW = 1.0 - smoothstep(0.15, 0.75, depth); // ~2 m strip along the shore
+        float alpha = clamp(mix(0.42, 0.97, smoothstep(0.0, 1.4, depth)) * (1.0 - clearW * 0.82) + fres * mix(0.5, 0.25, clearW) + foam*0.4, 0.0, 1.0);
         gl_FragColor = vec4(col, alpha);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>

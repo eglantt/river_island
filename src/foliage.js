@@ -3,8 +3,8 @@ import { rng } from './noise.js';
 
 // Procedural foliage atlas: 3x2 tiles, each a whole chunk of crown with transparent gaps.
 // 0 oak/maple spray, 1 birch spray, 2 willow streamers, 3 spruce bough, 4 bush mass, 5 dense core leaves
-export const TILE = { oak: 0, birch: 1, willow: 2, spruce: 3, bush: 4, core: 5 };
-const COLS = 3, ROWS = 2;
+export const TILE = { oak: 0, birch: 1, willow: 2, spruce: 3, bush: 4, core: 5, oak2: 6, bush2: 7 };
+const COLS = 4, ROWS = 2;
 export function tileUV(t) { const c = t % COLS, r = Math.floor(t / COLS); return [c / COLS, 1 - (r + 1) / ROWS, (c + 1) / COLS, 1 - r / ROWS]; }
 
 export function makeFoliageAtlas(size) {
@@ -22,6 +22,20 @@ export function makeFoliageAtlas(size) {
   // shade: leaves nearer the middle of the spray darker (inner shade), outer ones lighter
   const shade = (x, y, cx, cy, rad) => Math.max(0, Math.min(1, Math.hypot(x - cx, y - cy) / rad));
 
+  // irregular lobed envelope: radius at angle a (0..1 of tile half-size)
+  const lobes = (seed) => { const ph = [R() * 6, R() * 6, R() * 6]; return (a) => 0.78 + 0.12 * Math.sin(a * 3 + ph[0]) + 0.07 * Math.sin(a * 5 + ph[1]) + 0.05 * Math.sin(a * 7 + ph[2]); };
+  const spray = (tile, rx, ry, n, env, hue, satv) => inTile(tile, () => {
+    const cx = 128 * s, cy = 128 * s;
+    for (let b = 0; b < 8; b++) { const a = b / 8 * Math.PI * 2 + R() * 0.4, L = env(a) * 100 * s; twig(cx, cy, cx + Math.cos(a) * L * rx, cy + Math.sin(a) * L * ry, 2 * s); }
+    for (let i = 0; i < n; i++) {
+      const a = R() * Math.PI * 2, rr = Math.pow(R(), 0.55) * env(a) * 118 * s, x = cx + Math.cos(a) * rr * rx, y = cy + Math.sin(a) * rr * ry;
+      const sh = Math.min(1, rr / (118 * s)), l = 20 + sh * 22 + R() * 9;
+      leaf(x, y, a + (R() - 0.5) * 1.6, (9 + R() * 7) * s, (4 + R() * 2.4) * s, hsl(hue + R() * 26 - (R() < 0.06 ? 30 : 0), satv + R() * 16, l * 0.92), true);
+    }
+  });
+  // 6: oak, lobed horizontal oval; 7: bush, lobed vertical-ish mass
+  spray(6, 1.0, 0.72, 900, lobes(1), 86, 28);
+  spray(7, 0.86, 1.0, 1000, lobes(2), 92, 26);
   // 0: broadleaf spray (oak / maple), radiating twigs with many leaves
   inTile(0, () => {
     const cx = 128 * s, cy = 128 * s;
@@ -46,14 +60,19 @@ export function makeFoliageAtlas(size) {
       }
     }
   });
-  // 2: willow streamers
+  // 2: willow streamers inside a downward oval, tips taper and end inside the tile
   inTile(2, () => {
-    for (let b = 0; b < 22; b++) {
-      let x = (10 + R() * 236) * s, y = (R() * 30) * s; const sway = (R() - 0.5) * 0.4;
-      while (y < 250 * s) {
-        const nx = x + sway * 10 * s + (R() - 0.5) * 3 * s, ny = y + 9 * s; twig(x, y, nx, ny, 0.9 * s, 'rgba(90,80,40,0.7)');
-        leaf(nx, ny, Math.PI / 2 + 0.6 + (R() - 0.5) * 0.6, (14 + R() * 6) * s, 2.2 * s, hsl(75 + R() * 15, 30 + R() * 14, 28 + R() * 18), false);
-        leaf(nx, ny, Math.PI / 2 - 0.6 + (R() - 0.5) * 0.6, (14 + R() * 6) * s, 2.2 * s, hsl(75 + R() * 15, 30 + R() * 14, 28 + R() * 18), false);
+    const cx = 128 * s;
+    for (let b = 0; b < 26; b++) {
+      const u = (R() * 2 - 1) * 0.92, x0 = cx + u * 118 * s;
+      const yTop = (10 + (1 - Math.sqrt(1 - u * u)) * 70) * s, yEnd = (128 + Math.sqrt(1 - u * u) * 118 * (0.75 + R() * 0.2)) * s;
+      let x = x0, y = yTop; const sway = (R() - 0.5) * 0.35, len = yEnd - yTop;
+      while (y < yEnd) {
+        const t = (y - yTop) / len, nx = x + sway * 8 * s + (R() - 0.5) * 2.5 * s, ny = y + 8 * s;
+        twig(x, y, nx, ny, 0.9 * s * (1 - t * 0.6), 'rgba(90,80,40,0.7)');
+        const lw = (14 + R() * 6) * s * (1 - t * 0.55), c1 = hsl(75 + R() * 15, 30 + R() * 14, 28 + R() * 18);
+        leaf(nx, ny, Math.PI / 2 + 0.6 + (R() - 0.5) * 0.6, lw, 2.2 * s, c1, false);
+        leaf(nx, ny, Math.PI / 2 - 0.6 + (R() - 0.5) * 0.6, lw, 2.2 * s, hsl(75 + R() * 15, 30 + R() * 14, 28 + R() * 18), false);
         x = nx; y = ny;
       }
     }
@@ -146,6 +165,8 @@ export function cardAxes(R, size, outward, mode) {
   const up = Math.abs(nrm.y) > 0.9 ? new V(1, 0, 0) : new V(0, 1, 0);
   const ax = new V().crossVectors(up, nrm).normalize(), ay = new V().crossVectors(nrm, ax).normalize();
   const rot = mode === 'hang' ? 0 : (R() - 0.5) * 1.2, c = Math.cos(rot), s = Math.sin(rot);
+  const asp = mode === 'hang' ? 1.5 : 1 + R() * 0.8, wide = mode === 'hang' ? false : R() < 0.6;
+  const kx = wide ? Math.sqrt(asp) : 1 / Math.sqrt(asp), ky = 1 / kx;
   const ax2 = ax.clone().multiplyScalar(c).addScaledVector(ay, s), ay2 = ay.clone().multiplyScalar(c).addScaledVector(ax, -s);
-  return [ax2.multiplyScalar(size), ay2.multiplyScalar(size)];
+  return [ax2.multiplyScalar(size * kx), ay2.multiplyScalar(size * ky)];
 }

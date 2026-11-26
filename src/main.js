@@ -12,7 +12,7 @@ import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.12';
+const VERSION = '0.0.13';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -21,9 +21,9 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 50, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 25, bushCards: 9, spruceLv: 10, sprucePer: 5, forestCards: 14, variants: 2 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 70, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 42, bushCards: 14, spruceLv: 14, sprucePer: 7, forestCards: 24, variants: 3 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 90, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 58, bushCards: 18, spruceLv: 17, sprucePer: 8, forestCards: 32, variants: 4 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 50, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 12, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, algae: 900, bankBush: 50 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 70, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 18, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, algae: 1600, bankBush: 80 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 90, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 24, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, algae: 2400, bankBush: 110 },
 };
 const WEATHER = {
   clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
@@ -124,8 +124,9 @@ const walkable = (x, z) => world.H(x, z) > 0.08 && world.islandE(x, z) < 1.25 &&
 // ---------- input ----------
 const keys = {}; let joy = null, look = null, rjoy = null; const jv = { x: 0, y: 0 }, rv = { x: 0, y: 0 }; let lookDX = 0, lookDY = 0, jumpReq = false;
 const rstickEl = $('rstick'), rknob = $('rknob'), jumpEl = $('jump');
-const rCenter = () => { const b = rstickEl.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2, b.width / 2]; };
-const onJumpBtn = (x, y) => { const b = jumpEl.getBoundingClientRect(); return Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)) < b.width * 0.7; };
+let ctlLast = 0; const ctlTouch = () => { ctlLast = performance.now(); };
+const showEl = (el, x, y) => { el.style.left = x + 'px'; el.style.top = y + 'px'; el.classList.add('vis'); };
+const onJumpBtn = (x, y) => { if (!jumpEl.classList.contains('vis')) return false; const b = jumpEl.getBoundingClientRect(); return Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)) < b.width * 0.7; };
 addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT') return; keys[e.code] = true; if (e.code === 'Space' && started) { jumpReq = true; e.preventDefault(); } if (e.code === 'Escape' && photo) setPhoto(false); });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -133,10 +134,19 @@ const pad = $('pad'), stick = $('stick'), knob = $('knob');
 pad.addEventListener('pointerdown', (e) => {
   if (!started) return; closePanel();
   try { pad.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+  if (e.pointerType !== 'mouse') ctlTouch();
   if (e.pointerType !== 'mouse' && touchUI() && onJumpBtn(e.clientX, e.clientY)) { jumpReq = true; jumpEl.classList.add('down'); setTimeout(() => jumpEl.classList.remove('down'), 150); return; }
-  if (e.pointerType !== 'mouse' && touchUI() && !rjoy) { const [cx, cy, r] = rCenter(); if (Math.hypot(e.clientX - cx, e.clientY - cy) < r * 1.35) { rjoy = { id: e.pointerId, x: cx, y: cy, r }; return; } }
+  if (e.pointerType !== 'mouse' && touchUI() && !rjoy && e.clientX >= innerWidth * 0.5 && e.clientY > innerHeight * 0.5) {
+    // right joystick appears under the finger, jump button just below it (or to its left near the bottom edge)
+    const r = 58, cx = Math.min(e.clientX, innerWidth - r - 8), cy = Math.min(e.clientY, innerHeight - r - 8);
+    rjoy = { id: e.pointerId, x: cx, y: cy, r };
+    showEl(rstickEl, cx - r, cy - r);
+    const below = cy + r + 14 + 72 < innerHeight - 6;
+    showEl(jumpEl, below ? cx - 36 : cx - r - 14 - 72, below ? cy + r + 14 : cy - 36);
+    return;
+  }
   if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && !joy && S.mode === 'walk') {
-    joy = { id: e.pointerId, x: e.clientX, y: e.clientY }; stick.style.display = 'block'; stick.style.left = e.clientX - 60 + 'px'; stick.style.top = e.clientY - 60 + 'px';
+    joy = { id: e.pointerId, x: e.clientX, y: e.clientY }; showEl(stick, e.clientX - 60, e.clientY - 60);
   } else if (!look) look = { id: e.pointerId, x: e.clientX, y: e.clientY };
 });
 pad.addEventListener('pointermove', (e) => {
@@ -151,7 +161,8 @@ pad.addEventListener('pointermove', (e) => {
   }
 });
 const up = (e) => {
-  if (joy && e.pointerId === joy.id) { joy = null; jv.x = jv.y = 0; stick.style.display = 'none'; knob.style.transform = ''; }
+  if (e.pointerType !== 'mouse') ctlTouch();
+  if (joy && e.pointerId === joy.id) { joy = null; jv.x = jv.y = 0; knob.style.transform = ''; }
   if (look && e.pointerId === look.id) look = null;
   if (rjoy && e.pointerId === rjoy.id) { rjoy = null; rv.x = rv.y = 0; rknob.style.transform = ''; }
 };
@@ -445,6 +456,7 @@ function frame(now) {
   const mn = Math.floor(S.hour * 60);
   if (mn !== lastMin || S.weather !== lastWx) { lastMin = mn; lastWx = S.weather; $('clock').textContent = `${fmt(S.hour)} · ${WEATHER[S.weather].name}`; if (!panel.hidden) { $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); } }
   document.body.classList.toggle('touchui', touchUI());
+  if (!joy && !rjoy && !look && performance.now() - ctlLast > 3000) for (const el of [stick, rstickEl, jumpEl]) el.classList.remove('vis');
   $('clock').hidden = !S.clock; $('fps').hidden = !S.fps;
   if (S.fps) { renderer.getDrawingBufferSize(dbs); $('fps').textContent = `${Math.round(fpsS)} к/с · ${Q.name.toLowerCase()} · ${dbs.x}×${dbs.y}`; }
   if ((hintT += dt) > 1) {
@@ -460,6 +472,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { get ducks() { return ducks; }, testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

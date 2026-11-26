@@ -300,7 +300,7 @@ export function buildWorld(seed, Q) {
   // ---------- island vegetation ----------
   const FM = foliageMats(Q), cardAcc = new CardAcc(), bushCards = new CardAcc();
   const tint = (k = 1) => new THREE.Color(1, 1, 0.92).multiplyScalar((0.85 + R() * 0.3) * k);
-  const trunks = []; // collision circles
+  const trunks = [], rockList = []; // collision circles; rocks (grass-free zones)
   const trunkAcc = new Acc(), leafAcc = new Acc(), rockAcc = new Acc(), bushAcc = new Acc();
   const onIsland = (x, z) => islandE(x, z) < 0.95 && H(x, z) > 0.2;
   const randIsland = (emax, tries = 200) => {
@@ -316,7 +316,8 @@ export function buildWorld(seed, Q) {
   function tree(x, z, kind) {
     const g0 = H(x, z), base = new THREE.Vector3(x, g0 - 0.2, z);
     const height = kind === 'birch' ? 6 + R() * 2.5 : kind === 'willow' ? 4.5 + R() * 1.5 : 4.5 + R() * 2;
-    const lean = new THREE.Vector3((R() - 0.5) * (kind === 'willow' ? 0.6 : 0.2), 1, (R() - 0.5) * (kind === 'willow' ? 0.6 : 0.2)).normalize();
+    const la = R() * Math.PI * 2, lt = kind === 'willow' ? 0.2 + R() * 0.15 : 0.08 * R();
+    const lean = new THREE.Vector3(Math.sin(lt) * Math.cos(la), Math.cos(lt), Math.sin(lt) * Math.sin(la)).normalize();
     const rBase = kind === 'birch' ? 0.17 : kind === 'willow' ? 0.32 : 0.28;
     trunks.push([x, z, rBase + 0.25]);
     const lc = leafCols[kind], barkCol = kind === 'birch' ? C('#e8e4da') : C('#5a4632'), barkDark = C('#2a2420');
@@ -337,26 +338,33 @@ export function buildWorld(seed, Q) {
         const [p0, r] = clusters[k % clusters.length], isIn = k < inner;
         const out = p0.clone().sub(cc).add(new THREE.Vector3(R() - 0.5, (R() - 0.4) * 0.8, R() - 0.5)).normalize();
         const p = p0.clone().addScaledVector(out, r * (isIn ? 0.1 + R() * 0.3 : 0.35 + R() * 0.45)).add(new THREE.Vector3((R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5, (R() - 0.5) * r * 0.5));
-        const size = r * (isIn ? 0.55 + R() * 0.22 : 0.6 + R() * 0.3);
+        const size = r * (isIn ? 0.55 + R() * 0.22 : 0.6 + R() * 0.3) * (kind === 'birch' ? 1.1 : 1);
         const mode = !isIn && kind === 'willow' && R() < 0.55 ? 'hang' : 'out';
         if (mode === 'hang') p.y -= r * 0.45;
         const [ax, ay] = cardAxes(R, size, out, mode);
         const t = isIn ? tint(0.62 + R() * 0.12) : tint(p.y > cc.y ? 1.05 : 0.88);
-        cardAcc.card(p, ax, ay, isIn ? TILE.core : mode === 'hang' ? TILE.willow : tile, cc, t, sw(p.y - size), sw(p.y + size), R() < 0.5);
+        const tl = isIn ? TILE.core : mode === 'hang' ? TILE.willow : (tile === TILE.oak && R() < 0.5 ? TILE.oak2 : tile);
+        cardAcc.card(p, ax, ay, tl, cc, t, sw(p.y - size), sw(p.y + size), R() < 0.5);
       }
     }
     function branch(p, dir, len, r, depth) {
       const end = p.clone().addScaledVector(dir, len);
       trunkAcc.add(limbGeo(p, end, r, r * 0.68, depth > 1 ? 7 : 5, 2), barkFn, swayT);
-      if (depth === 0) { leaves(end, (kind === 'birch' ? 0.85 : 1.15) + R() * 0.45); return; }
-      const kids = depth === 1 ? 3 : 2 + (R() < 0.5 ? 1 : 0);
+      if (depth === 0) { leaves(end, (kind === 'birch' ? 0.94 : kind === 'willow' ? 0.95 : 1.15) + R() * 0.45); return; }
+      const kids = kind === 'willow' ? (depth >= 2 ? 3 + (R() < 0.5 ? 1 : 0) : 3) : depth === 1 ? 3 : 2 + (R() < 0.5 ? 1 : 0);
       for (let k = 0; k < kids; k++) {
-        const nd = dir.clone().add(new THREE.Vector3((R() - 0.5) * 1.5, (kind === 'willow' ? 0.15 : 0.45) + R() * 0.4, (R() - 0.5) * 1.5)).normalize();
-        branch(end, nd, len * (0.62 + R() * 0.15), r * 0.62, depth - 1);
+        const nd = kind === 'willow' && depth === 3
+          ? dir.clone().multiplyScalar(0.8).add(new THREE.Vector3(-dir.x * 1.6, 0.25, -dir.z * 1.6)).add(new THREE.Vector3((R() - 0.5) * 0.9, R() * 0.3, (R() - 0.5) * 0.9)).normalize() // trunk curves back up
+          : dir.clone().add(new THREE.Vector3((R() - 0.5) * 1.5, (kind === 'willow' ? 0.1 : 0.45) + R() * 0.4, (R() - 0.5) * 1.5)).normalize();
+        branch(end, nd, len * (kind === 'willow' && depth === 3 ? 0.75 : 0.62 + R() * 0.15), r * (kind === 'willow' && depth === 3 ? 0.75 : 0.62), depth - 1);
+        if (kind === 'willow' && depth <= 2 && R() < 0.6) { // thin drooping shoot
+          const sd = dir.clone().add(new THREE.Vector3((R() - 0.5) * 2, -0.2, (R() - 0.5) * 2)).normalize(), se = end.clone().addScaledVector(sd, len * 0.45);
+          trunkAcc.add(limbGeo(end, se, r * 0.3, r * 0.12, 4, 1), barkFn, swayT);
+        }
       }
       if (depth === 1 && R() < 0.7) leaves(end, 0.9 + R() * 0.3);
     }
-    branch(base, lean, height * 0.5, rBase, 2);
+    if (kind === 'willow') branch(base, lean, height * 0.36, rBase, 3); else branch(base, lean, height * 0.5, rBase, 2);
     crown();
   }
   {
@@ -380,7 +388,7 @@ export function buildWorld(seed, Q) {
         const isIn = j < nin, out = new THREE.Vector3(R() - 0.5, R() * 0.6, R() - 0.5).normalize();
         const p = bc.clone().addScaledVector(out, sz * (isIn ? 0.05 + R() * 0.25 : 0.3 + R() * 0.4)), size = sz * (isIn ? 0.55 + R() * 0.2 : 0.6 + R() * 0.3);
         const [ax, ay] = cardAxes(R, size, out, 'out');
-        bushCards.card(p, ax, ay, isIn ? TILE.core : TILE.bush, bc, isIn ? tint(0.65) : tint(p.y > bc.y ? 1 : 0.82), Math.max(0, p.y - size - g0) * 0.25, (p.y + size - g0) * 0.25, R() < 0.5);
+        bushCards.card(p, ax, ay, isIn ? TILE.core : (R() < 0.5 ? TILE.bush2 : TILE.bush), bc, isIn ? tint(0.65) : tint(p.y > bc.y ? 1 : 0.82), Math.max(0, p.y - size - g0) * 0.25, (p.y + size - g0) * 0.25, R() < 0.5);
       }
     }
     // rocks along the shore
@@ -390,16 +398,38 @@ export function buildWorld(seed, Q) {
       for (let t = 0; t < 80 && !c; t++) { const q = randIsland(1.25, 50); if (q && islandE(q[0], q[1]) > 0.78) c = q; }
       if (!c) continue;
       const [x, z] = c, g0 = H(x, z), r = 0.25 + R() * 0.7, cc = new THREE.Vector3(x, g0 + r * 0.15, z);
-      rockAcc.add(blobGeo(N, cc, r, 0.6, 1, 0.22), (v, n) => tmp.copy(cRock).lerp(cMossR, sm(0.4, 0.9, n.y) * 0.6).multiplyScalar(0.75 + 0.25 * N.n2(v.x * 4, v.z * 4)), () => 0);
+      cc.y -= r * 0.25; rockAcc.add(rockGeo(cc, r, 0.5 + R() * 0.3), rockCol(cRock), () => 0); rockList.push([x, z, r * 1.2]);
     }
   }
+  // faceted rock: displaced blob chopped by random planes (flat faces, sharp edges), flattened top
+  function rockGeo(c, r, flat) {
+    const g = new THREE.IcosahedronGeometry(1, 2), P = g.attributes.position, v = new THREE.Vector3();
+    const planes = Array.from({ length: 6 + Math.floor(R() * 4) }, () => { const nn = new THREE.Vector3(R() - 0.5, (R() - 0.2) * 1.2, R() - 0.5).normalize(); return [nn, 0.6 + R() * 0.3]; });
+    for (let i = 0; i < P.count; i++) {
+      v.fromBufferAttribute(P, i);
+      v.multiplyScalar(1 + 0.18 * N.n2(v.x * 1.3 + c.x, v.z * 1.3 + c.z + v.y));
+      for (const [nn, d] of planes) { const e = v.dot(nn) - d; if (e > 0) v.addScaledVector(nn, -e); }
+      if (v.y > flat) v.y = flat + (v.y - flat) * 0.3;
+      P.setXYZ(i, c.x + v.x * r * 1.15, c.y + v.y * r * 0.75, c.z + v.z * r);
+    }
+    g.computeVertexNormals();
+    return g;
+  }
+  function rockCol(base) { return (v, n) => {
+    const grain = 0.82 + 0.22 * N.n2(v.x * 9, v.z * 9 + v.y * 7) + 0.1 * N.n2(v.x * 31, v.y * 29);
+    tmp.copy(base).multiplyScalar(grain);
+    const lich = N.n2(v.x * 2.3 + 7, v.z * 2.3 + v.y * 1.7);
+    if (lich > 0.45) tmp.lerp(C('#a8a48a'), 0.55); else if (lich < -0.6) tmp.lerp(C('#b0743c'), 0.45);
+    tmp.lerp(C('#4f6a30'), sm(0.55, 0.9, n.y) * sm(-0.2, 0.4, N.n2(v.x * 1.5, v.z * 1.5)) * 0.8 + sm(0.2, -0.7, n.z) * 0.25);
+    return tmp;
+  }; }
   // boulders inside the island and scattered stones
   {
     const cB = C('#8a857c'), cB2 = C('#726c63'), cM = C('#5a7438');
     const boulder = (x, z, r) => {
-      const g0 = H(x, z), cc = new THREE.Vector3(x, g0 + r * 0.12, z), base = R() < 0.5 ? cB : cB2;
-      rockAcc.add(blobGeo(N, cc, r, 0.68, 2, 0.22), (v, n) => tmp.copy(base).lerp(cM, sm(0.4, 0.85, n.y) * 0.75).multiplyScalar(0.72 + 0.3 * N.n2(v.x * 3.5, v.z * 3.5 + v.y)), () => 0);
-      trunks.push([x, z, r * 0.95]);
+      const g0 = H(x, z), cc = new THREE.Vector3(x, g0 - r * 0.22, z), base = R() < 0.5 ? cB : cB2;
+      rockAcc.add(rockGeo(cc, r, 0.55 + R() * 0.3), rockCol(base), () => 0);
+      trunks.push([x, z, r * 0.95]); rockList.push([x, z, r * 1.2]);
     };
     const nBo = 4 + Math.floor(R() * 4);
     for (let i = 0, made = 0; i < 60 && made < nBo; i++) {
@@ -411,8 +441,8 @@ export function buildWorld(seed, Q) {
     }
     for (let i = 0; i < 55; i++) {
       const c = randIsland(1.05, 30); if (!c) continue;
-      const r = 0.06 + R() * 0.14, cc = new THREE.Vector3(c[0], H(c[0], c[1]) + r * 0.2, c[1]);
-      rockAcc.add(blobGeo(N, cc, r, 0.6, 0, 0.25), () => tmp.copy(cB2).multiplyScalar(0.75 + R() * 0.4), () => 0);
+      const r = 0.06 + R() * 0.14, cc = new THREE.Vector3(c[0], H(c[0], c[1]) - r * 0.1, c[1]);
+      rockAcc.add(rockGeo(cc, r, 0.5), rockCol(cB2), () => 0); rockList.push([c[0], c[1], r * 1.2]);
     }
   }
   // driftwood on the sand bar and a fallen tree reaching into the river upstream
@@ -444,7 +474,7 @@ export function buildWorld(seed, Q) {
     for (let k = 0; k < 16; k++) {
       const x = cxa + 12 + R() * (cliffL - 24); if (cliffFall(x) < 0.6) continue;
       const r = 0.2 + R() * 0.6, dd = hwAt(x) + cliffOff(x) - 2.2 + R() * 1.4, z = mz(x) + cliffSide * dd, cc = new THREE.Vector3(x, H(x, z) + r * 0.15, z);
-      rockAcc.add(blobGeo(N, cc, r, 0.7, 1, 0.25), (v, n) => tmp.copy(cR).multiplyScalar(0.7 + 0.35 * Math.max(0, n.y)), () => 0);
+      cc.y -= r * 0.15; rockAcc.add(rockGeo(cc, r, 0.6), rockCol(cR), () => 0);
     }
   }
   const leafMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'leaf', 0.32, { LEAF: '' });
@@ -491,7 +521,7 @@ export function buildWorld(seed, Q) {
       for (let t = 0; t < 12; t++) {
         const c = randIsland(0.97, 1); if (!c) continue;
         const [x, z] = c, h = H(x, z); if (h < 0.3 + N.n2(x * 0.4, z * 0.4) * 0.1) continue;
-        if (trunks.some(([tx, tz, r]) => Math.hypot(tx - x, tz - z) < r * 0.8)) continue;
+        if (trunks.some(([tx, tz, r]) => Math.hypot(tx - x, tz - z) < r * 0.8) || rockList.some(([rx, rz, r]) => Math.hypot(rx - x, rz - z) < r)) continue;
         const patchy = N.n2(x * 0.25, z * 0.25);
         d.position.set(x, h - 0.03, z); d.rotation.set(0, R() * 6.28, 0);
         const hs = (0.22 + R() * 0.3) * (0.8 + 0.5 * sm(-0.3, 0.6, patchy)) * sm(0.2, 0.55, h);
@@ -545,8 +575,37 @@ export function buildWorld(seed, Q) {
       const x = (R() * 2 - 1) * 260, z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) + (R() * 2 - 1) * 9), h = H(x, z);
       if (h < 0.2 && h > -0.35) reedClusters.push([x, z, 1.5 + R() * 3.5]);
     }
+    // dense walls: strips 10-25 m along the waterline
+    const walls = [];
+    for (let t = 0; t < 4000 && walls.length < 12; t++) {
+      const x = (R() * 2 - 1) * 240, side = R() < 0.5 ? -1 : 1, z = mz(x) + side * (hwAt(x) - 1), h = H(x, z);
+      if (h < 0.1 && h > -0.4 && Math.abs(x) > 6) walls.push([x, side, 10 + R() * 15]);
+    }
+    const reedMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'reed', 0.8, { GUST: '', NOFLIP: '', HIDECAMP: '' });
+    const placeWall = (d) => {
+      for (let t = 0; t < 30; t++) {
+        const w0 = walls[Math.floor(R() * walls.length)], x = w0[0] + (R() - 0.5) * w0[2], z = mz(x) + w0[1] * (hwAt(x) - 3.5 + R() * 4.5), h = H(x, z);
+        if (h > 0.3 || h < -0.6) continue;
+        d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.12, R() * 6.28, (R() - 0.5) * 0.12); d.scale.set(1 + R() * 0.6, 1.5 + R() * 1.3, 1);
+        return white;
+      }
+      return null;
+    };
     const g = bladeGeo(0.08, 5, C('#a2a85a'), C('#3e5a2a'), 0.25);
-    meshes.reeds = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'reed', 0.35, { GUST: '', NOFLIP: '', HIDECAMP: '' }), Q.reeds, (d) => {
+    if (walls.length) meshes.reedWalls = instanced(g, reedMat, Q.reedWall, placeWall);
+    // brown panicles on part of the stems
+    {
+      const pg = bladeGeo(0.08, 5, C('#a2a85a'), C('#3e5a2a'), 0.25), P = pg.attributes.position, cols = pg.attributes.color;
+      const pos = Array.from(P.array), col = Array.from(cols.array), sw = Array.from(pg.attributes.sway.array), nor = Array.from(pg.attributes.normal.array), idx = Array.from(pg.index.array);
+      const b0 = pos.length / 3, pc = C('#5a4028');
+      for (const [x, y, s2] of [[-0.035, 1.0, 1], [0.035, 1.0, 1], [-0.02, 1.16, 1], [0.02, 1.16, 1]]) { pos.push(x, y, 0.25); col.push(pc.r, pc.g, pc.b); sw.push(s2); nor.push(0, 1, 0); }
+      idx.push(b0, b0 + 1, b0 + 2, b0 + 1, b0 + 3, b0 + 2);
+      const g2 = new THREE.BufferGeometry();
+      g2.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g2.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      g2.setAttribute('sway', new THREE.Float32BufferAttribute(sw, 1)); g2.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g2.setIndex(idx);
+      if (walls.length) meshes.reedPan = instanced(g2, reedMat, Math.round(Q.reedWall * 0.25), placeWall);
+    }
+    meshes.reeds = instanced(g, reedMat, Q.reeds, (d) => {
       for (let t = 0; t < 30; t++) {
         let x, z;
         if (reedClusters.length && R() < 0.7) {
@@ -567,6 +626,57 @@ export function buildWorld(seed, Q) {
       }
       return null;
     });
+  }
+  // underwater weed on the shallow bed, swaying with the current
+  {
+    const g = bladeGeo(0.06, 4, C('#5f7a2a'), C('#2c3d18'), 0.35);
+    meshes.algae = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'algae', 0.9, { NOFLIP: '' }), Q.algae, (d) => {
+      for (let t = 0; t < 40; t++) {
+        const near = R() < 0.4;
+        let x, z;
+        if (near) { const u = (R() * 2 - 1) * irx * 1.5, v = (R() * 2 - 1) * irz * 1.6; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
+        else { x = (R() * 2 - 1) * 200; z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) - 1 - R() * 9); }
+        const h = H(x, z); if (h > -0.18 || h < -1.3) continue;
+        if (N.n2(x * 0.25, z * 0.25) < -0.1) continue;
+        const L = Math.min(-h - 0.06, 0.25 + R() * 0.55);
+        d.position.set(x, h, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(0.8 + R() * 0.8, L, 1);
+        return white;
+      }
+      return null;
+    });
+  }
+  // bushes along both banks
+  {
+    const bush = (n) => {
+      const acc = new CardAcc(), bc = new THREE.Vector3(0, 0.6, 0), nin = Math.round(n * 0.4);
+      for (let j = 0; j < n; j++) {
+        const isIn = j < nin, out = new THREE.Vector3(R() - 0.5, R() * 0.6, R() - 0.5).normalize();
+        const p = bc.clone().addScaledVector(out, isIn ? 0.05 + R() * 0.25 : 0.3 + R() * 0.45), size = isIn ? 0.55 + R() * 0.2 : 0.6 + R() * 0.3;
+        const [ax, ay] = cardAxes(R, size, out, 'out');
+        acc.card(p, ax, ay, isIn ? TILE.core : (R() < 0.5 ? TILE.bush2 : TILE.bush), bc, isIn ? tint(0.65) : tint(p.y > bc.y ? 1 : 0.82), Math.max(0, p.y - size) * 0.25, (p.y + size) * 0.25, R() < 0.5);
+      }
+      return acc.build();
+    };
+    const bm = FM.mk('bankbush', 0.3), btint = new THREE.Color();
+    const groups = [];
+    for (let t = 0; t < 3000 && groups.length < Q.bankBush / 3; t++) {
+      const x = (R() * 2 - 1) * 260, side = R() < 0.5 ? -1 : 1, bd = Math.pow(R(), 1.5) * 30 - 1, z = mz(x) + side * (hwAt(x) + bd);
+      if (H(x, z) > 0.45) groups.push([x, z]);
+    }
+    if (groups.length) {
+      for (const geo of [bush(Q.bushCards), bush(Math.round(Q.bushCards * 0.8))]) {
+        const m = instanced(geo, bm, Math.round(Q.bankBush / 2), (d) => {
+          for (let t = 0; t < 10; t++) {
+            const gq = groups[Math.floor(R() * groups.length)], x = gq[0] + (R() - 0.5) * 6, z = gq[1] + (R() - 0.5) * 6, h = H(x, z);
+            if (h < 0.4) continue;
+            const s = 0.8 + R() * 1.0; d.position.set(x, h - 0.1, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(s * (0.9 + R() * 0.3), s, s * (0.9 + R() * 0.3));
+            return btint.setHSL(0.25 + (R() - 0.5) * 0.06, 0.2 + R() * 0.15, 0.45 + R() * 0.1).multiplyScalar(2.1);
+          }
+          return null;
+        });
+        m.customDepthMaterial = FM.depth;
+      }
+    }
   }
   // bank forest (instanced conifers + broadleaves; foliage cards; simpler geometry far away)
   {
@@ -601,7 +711,7 @@ export function buildWorld(seed, Q) {
         const p = cc.clone().add(new V3(out.x * spread, out.y * ry, out.z * spread).multiplyScalar(isIn ? 0.4 + R() * 0.7 : 1.3 + R() * 1.0));
         const size = isIn ? 1.3 + R() * 0.4 : 1.4 + R() * 0.6;
         const [ax, ay] = cardAxes(R, size, out, 'out');
-        acc.card(p, ax, ay, isIn ? TILE.core : TILE.oak, cc, isIn ? tint(0.62) : tint(p.y > cc.y ? 1.05 : 0.82), (p.y - size) * 0.03, (p.y + size) * 0.03, R() < 0.5);
+        acc.card(p, ax, ay, isIn ? TILE.core : (R() < 0.5 ? TILE.oak2 : TILE.oak), cc, isIn ? tint(0.62) : tint(p.y > cc.y ? 1.05 : 0.82), (p.y - size) * 0.03, (p.y + size) * 0.03, R() < 0.5);
       }
       return acc.build();
     };
