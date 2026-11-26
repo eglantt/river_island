@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { rng } from './noise.js';
+import { createGull, flockWingGeo } from './gull.js';
 
 const V = THREE.Vector3;
 const _m = new THREE.Matrix4(), _l = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new V(), _p = new V();
@@ -62,29 +63,12 @@ export function createFauna(world, Q, scene) {
 
   // ---------- birds / bats ----------
   const NBird = 14;
-  const bg = new THREE.BufferGeometry(); bg.setAttribute('position', new THREE.Float32BufferAttribute([-0.2, 0, 0, 0.25, 0, 0, -0.05, 0, 1], 3)); bg.computeVertexNormals();
+  const bg = flockWingGeo();
   const birdMat = new THREE.MeshBasicMaterial({ color: '#25242a', side: THREE.DoubleSide });
   const birds = new THREE.InstancedMesh(bg, birdMat, NBird * 2); birds.frustumCulled = false; group.add(birds);
   // a lone gull gliding low along the river now and then
-  const gull = new THREE.Group(); group.add(gull);
-  {
-    const white = new THREE.MeshLambertMaterial({ color: '#eeece6' }), grey = new THREE.MeshLambertMaterial({ color: '#9aa0a6', side: THREE.DoubleSide }), tipM = new THREE.MeshLambertMaterial({ color: '#1e1e20', side: THREE.DoubleSide }), beakM = new THREE.MeshLambertMaterial({ color: '#e2b33a' });
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 7).scale(2.6, 0.85, 0.9), white); gull.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 7).scale(1.3, 1, 0.95), white); head.position.set(0.33, 0.05, 0); gull.add(head);
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.09, 6).rotateZ(-Math.PI / 2), beakM); beak.position.set(0.44, 0.04, 0); gull.add(beak);
-    const tail = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-0.26, 0.02, 0, -0.46, 0.03, 0.1, -0.46, 0.03, -0.1], 3)), white); tail.geometry.computeVertexNormals(); tail.material = grey; gull.add(tail);
-    const wingPart = (len, w0, w1, sweep, sd) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, -w0, 0, 0, -sweep - w1, 0, len * sd, 0, 0, 0, -sweep - w1, 0, len * sd, -sweep, 0, len * sd], 3)); g.computeVertexNormals(); return g; };
-    gull.userData.w = [];
-    for (const side of [1, -1]) {
-      const sh = new THREE.Group(); sh.position.set(0.06, 0.04, side * 0.07); gull.add(sh);
-      sh.add(new THREE.Mesh(wingPart(0.42, 0.16, 0.12, 0.02, side), grey));
-      const el = new THREE.Group(); el.position.set(-0.02, 0, 0.42 * side); sh.add(el);
-      el.add(new THREE.Mesh(wingPart(0.4, 0.12, 0.05, 0.12, side), grey));
-      const tp = new THREE.Mesh(wingPart(0.12, 0.05, 0.02, 0.05, side), tipM); tp.position.set(-0.12, 0.001, 0.36 * side); el.add(tp);
-      gull.userData.w.push([sh, el, side]);
-    }
-    gull.scale.setScalar(1.6); gull.visible = false;
-  }
+  // gulls circling over the river (real gull model)
+  const gulls = [0, 1].map((i) => { const gm = createGull(1); group.add(gm.root); return { gm, ph: R() * 6, cx: (i ? -60 : 50) + R() * 30, r: 22 + R() * 18, h: 12 + R() * 10, w: (i ? -1 : 1) * (0.16 + R() * 0.06), a: R() * 6.28, fl: 0, flT: 3 + R() * 6, wing: R() * 6 }; });
   let gullT = 20 + R() * 30, gullDir = 1;
   const bd = Array.from({ length: NBird }, (_, i) => ({ off: new V((R() - 0.5) * 26, (R() - 0.5) * 8, (R() - 0.5) * 26), ph: R() * 10, p: new V(), prev: new V() }));
 
@@ -186,16 +170,21 @@ export function createFauna(world, Q, scene) {
       setWing(birds, i * 2, b.p, yaw, 0, 1, flap, s); setWing(birds, i * 2 + 1, b.p, yaw, 0, -1, flap, s);
     }
     birds.instanceMatrix.needsUpdate = true;
-    // gull pass: ~40 s along the river, then a pause
-    gullT -= dt;
-    const gu = gullT < 0 ? Math.min(1, -gullT / 40) : -1;
-    if (gu >= 1) { gullT = 30 + R() * 60; gullDir = -gullDir; }
-    const gx = gullDir * (-320 + 640 * Math.max(0, gu)), gs = gu >= 0 && gu < 1 && env.birds > 0.3 ? 1.1 : 1e-4;
-    const gp = new V(gx, 9 + Math.sin(t * 0.6) * 3, mz(gx) + Math.sin(t * 0.21) * 12), gnx = gx + gullDir;
-    const gyaw = Math.atan2(-(mz(gnx) - mz(gx)), gullDir);
-    const flapping = Math.sin(t * 0.7) > 0.3, ph = Math.sin(t * 6.5);
-    gull.visible = gs > 0.01; gull.position.copy(gp); gull.rotation.set(0, gyaw, Math.sin(t * 0.4) * 0.15, 'YXZ');
-    for (const [sh, el, sd] of gull.userData.w) { sh.rotation.x = -sd * (flapping ? ph * 0.5 : 0.12); el.rotation.x = sd * (flapping ? 0.1 + ph * 0.3 : 0.22); }
+    // gulls: soaring circles that drift along the river, bursts of flapping, banking in turns
+    for (const g of gulls) {
+      g.a += g.w * dt; g.cx += Math.sin(t * 0.02 + g.ph) * dt * 1.5;
+      g.flT -= dt; if (g.flT < 0) { g.fl = g.fl > 0.5 ? 0 : 1; g.flT = g.fl ? 1.5 + R() * 2.5 : 5 + R() * 9; }
+      g.flW = (g.flW || 0) + ((g.fl ? 1 : 0) - (g.flW || 0)) * Math.min(1, dt * 2);
+      g.wing += dt * 2 * Math.PI * 2.6 * (0.3 + 0.7 * g.flW);
+      const cz = mz(g.cx), x = g.cx + Math.cos(g.a) * g.r, z = cz + Math.sin(g.a) * g.r * 0.7, y = g.h + Math.sin(g.a * 2 + g.ph) * 2;
+      const vx = -Math.sin(g.a) * g.r * g.w, vz = Math.cos(g.a) * g.r * 0.7 * g.w;
+      const show = env.birds > 0.3;
+      g.gm.root.visible = show;
+      g.gm.root.position.set(x, y, z);
+      const bank = -Math.sign(g.w) * 0.35;
+      g.gm.root.rotation.set(0, Math.atan2(-vz, vx), 0, 'YXZ'); g.gm.root.rotateX(bank);
+      if (show && cam && g.gm.root.position.distanceToSquared(cam) < 250 * 250) g.gm.animate(g.wing, g.flW, bank);
+    }
 
     // fish
     if (jump) {
@@ -216,7 +205,7 @@ export function createFauna(world, Q, scene) {
       }
     }
   }
-  function dispose() { group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); scene.remove(group); }
+  function dispose() { gulls.forEach((g) => g.gm.dispose()); group.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); scene.remove(group); }
   function nearest(cam) {
     let best = 1e9, bp = null;
     for (let i = 0; i < ND; i++) { if (df[i].s < 0.5) continue; const d = df[i].p.distanceTo(cam); if (d < best) { best = d; bp = df[i].p; } }
