@@ -346,17 +346,16 @@ export function waterMaterial() {
           refl += vec3(0.85, 0.9, 1.0) * exp(-da * 9000.0) * smoothstep(0.0, 0.02, R.y) * uBolt.w * 2.5;
         }
         // reflected forest wall along banks
-        float side = sign(R.z + 1e-4);
+        // one ray decides the bank, the hit point and the height; it uses a calmer normal so wind waves don't punch hard sky patches
+        vec3 Rs = reflect(-V, normalize(vec3(nxy.x * 0.35, 1.0, nxy.y * 0.35))); Rs.y = abs(Rs.y);
+        float side = sign(Rs.z + 1e-4);
         float mz = mzf(vWp.x);
         float bankZ = mz + side*(uRiver.w + 14.0);
-        float tz = (bankZ - vWp.z) / (R.z + side*1e-4);
+        float tz = min((bankZ - vWp.z) / (Rs.z + side*1e-4), 3000.0);
         if (tz > 0.0) {
-          float hx = vWp.x + R.x*tz;
+          float hx = vWp.x + Rs.x*tz;
           float th = 15.0 + 9.0*texture2D(tNoise, vec2(hx*0.004, side*0.3)).g + 7.0*texture2D(tNoise, vec2(hx*0.017, 0.2)).r;
-          float hy = R.y * tz;
-          // use a calmer normal for the forest line and a soft edge, so wind waves don't punch hard sky patches
-          vec3 Rs = reflect(-V, normalize(vec3(nxy.x * 0.35, 1.0, nxy.y * 0.35))); Rs.y = abs(Rs.y);
-          float hs = Rs.y * (bankZ - vWp.z) / (Rs.z + side * 1e-4), ew = 2.5 + fwidth(hs) * 2.0;
+          float hs = Rs.y * tz, ew = 2.5 + min(fwidth(hs) * 2.0, 6.0);
           float tree = smoothstep(th + ew, th - ew, hs);
           vec3 forest = uAmb * vec3(0.16, 0.24, 0.13) * 1.6 + uSunCol*uSunVis*uSunOcc*vec3(0.06,0.08,0.03);
           refl = mix(refl, forest, tree * 0.92);
