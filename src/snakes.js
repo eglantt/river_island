@@ -216,7 +216,7 @@ export function createSnakes(world, Q, scene) {
       const need = i * ds;
       for (;;) {
         const b = arr[ti + 1]; if (!b) { const pv = out[i - 1], pp = out[Math.max(0, i - 2)]; out[i].set(pv.x + (pv.x - pp.x), pv.y, pv.z + (pv.z - pp.z)); break; }
-        const seg = Math.hypot(b.x - ax, b.z - az);
+        const seg = Math.hypot(b.x - ax, b.y - ay, b.z - az);
         if (acc + seg >= need && seg > 1e-7) { const f = (need - acc) / seg; out[i].set(ax + (b.x - ax) * f, ay + (b.y - ay) * f, az + (b.z - az) * f); break; }
         acc += seg; ax = b.x; az = b.z; ay = b.y; ti++;
       }
@@ -302,10 +302,11 @@ export function createSnakes(world, Q, scene) {
         const dv = s.dv, floorY = -Math.max(0, depthHere - 0.04); // head stays above the bottom
         dv.t += dt;
         if (wantHide || !inWater) dv.ph = 'up';
-        if (dv.ph === 'down') { s.hdY = Math.max(dv.target, floorY, s.hdY - Math.max(s.spd * dt * 0.6, dt * 0.02)); if (s.hdY <= Math.max(dv.target, floorY) + 0.005) { dv.ph = dv.bottom ? 'bottom' : 'under'; dv.t = 0; dv.dur = dv.bottom ? 5 + R() * 5 : 3 + R() * 6; } }
+        const stepH = s.spd * dt * 0.55; // depth changes only together with forward travel (≤ ~30°)
+        if (dv.ph === 'down') { s.hdY = Math.max(dv.target, floorY, s.hdY - stepH); if (s.hdY <= Math.max(dv.target, floorY) + 0.005) { dv.ph = dv.bottom ? 'bottom' : 'under'; dv.t = 0; dv.dur = dv.bottom ? 5 + R() * 5 : 3 + R() * 6; } }
         else if (dv.ph === 'bottom' || dv.ph === 'under') { s.hdY = Math.max(s.hdY, floorY); if (dv.t > dv.dur && (dv.ph === 'under' || true)) { dv.ph = 'up'; } }
-        else if (dv.ph === 'up') { s.hdY = Math.min(0, s.hdY + Math.max(s.spd * dt * 0.6, dt * 0.05)); if (s.hdY >= 0) { s.hdY = 0; s.dv = null; env.ripple(s.hd.x, s.hd.z, 0.1); } }
-        if (s.dv) { if (s.dv.ph === 'bottom') want = 0; else want *= 0.7; }
+        else if (dv.ph === 'up') { s.hdY = Math.min(0, s.hdY + stepH); if (s.hdY >= 0) { s.hdY = 0; s.dv = null; env.ripple(s.hd.x, s.hd.z, 0.1); } }
+        if (s.dv) { if (s.dv.ph === 'bottom') want = 0; else if (s.dv.ph === 'under') want *= 0.8; else want = Math.max(0.18, want * 0.85); }
       }
       // short pauses on the water surface (the current then carries the snake)
       if (inWater && !s.dv && s.state === 'crawl' && Math.sin(t * 0.17 + k * 1.3) > 0.9) want = 0;
