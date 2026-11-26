@@ -76,7 +76,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
   mat.onBeforeCompile = (sh) => {
     for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
-    sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (any(isnan(gl_FragColor)) || any(isinf(gl_FragColor))) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); // never feed NaN/Inf to bloom');
+    if (defs.SAFE !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  { vec4 c_ = gl_FragColor; if (!(abs(c_.r) < 1e4 && abs(c_.g) < 1e4 && abs(c_.b) < 1e4 && abs(c_.a) < 1e4)) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); }');
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
@@ -424,7 +424,7 @@ export function waterMaterial() {
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>
-        if (any(isnan(gl_FragColor)) || any(isinf(gl_FragColor))) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); // never feed NaN/Inf to bloom
+        { vec4 c_ = gl_FragColor; if (!(abs(c_.r) < 1e4 && abs(c_.g) < 1e4 && abs(c_.b) < 1e4 && abs(c_.a) < 1e4)) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); } // never feed NaN/Inf to bloom
       }`,
   });
   Object.assign(m.uniforms, U);

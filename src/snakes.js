@@ -16,7 +16,7 @@ export function createSnakes(world, Q, scene) {
 
   // ---------- materials ----------
   const mkMat = (base, spots, L) => {
-    const m = patch(new THREE.MeshPhongMaterial({ vertexColors: false, color: 0xffffff, shininess: 38, specular: new THREE.Color(0.16, 0.16, 0.15) }), 'snake' + spots, 0);
+    const m = patch(new THREE.MeshPhongMaterial({ vertexColors: false, color: 0xffffff, shininess: 38, specular: new THREE.Color(0.16, 0.16, 0.15) }), 'snake' + spots, 0, { SAFE: '' });
     const ob = m.onBeforeCompile;
     m.customProgramCacheKey = () => 'snake' + spots;
     m.onBeforeCompile = (sh) => {
@@ -146,11 +146,11 @@ export function createSnakes(world, Q, scene) {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('aS', new THREE.BufferAttribute(aS, 2));
     g.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(nV), 1)); g.setIndex(idx);
     const body = new THREE.Mesh(g, mat); body.frustumCulled = false; body.castShadow = true; body.receiveShadow = true; scene.add(body);
-    const hm = patch(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 38, specular: new THREE.Color(0.16, 0.16, 0.15) }), 'snakeH', 0);
+    const hm = patch(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 38, specular: new THREE.Color(0.16, 0.16, 0.15) }), 'snakeH', 0, { SAFE: '' });
     { const ob = hm.onBeforeCompile; hm.customProgramCacheKey = () => 'snakeH'; hm.onBeforeCompile = (sh) => { ob(sh); sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.04, 0.09, 0.085), clamp(-vWp.y * 3.0 + max(-vWp.y, 0.0) * 8.0, 0.0, 0.85));'); }; }
     const head = new THREE.Mesh(headGeo(look.base), hm); head.castShadow = true; scene.add(head);
     const tg = tongueGeo(); tg.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(tg.attributes.position.count), 1));
-    const tongue = new THREE.Mesh(tg, patch(new THREE.MeshLambertMaterial({ color: 0x141012, side: THREE.DoubleSide }), 'tongue', 0)); head.add(tongue);
+    const tongue = new THREE.Mesh(tg, patch(new THREE.MeshLambertMaterial({ color: 0x141012, side: THREE.DoubleSide }), 'tongue', 0, { SAFE: '' })); head.add(tongue);
     tongue.position.set(0.038, -0.0008, 0); tongue.scale.set(0.001, 1, 1);
     // initial trail: a gentle S on land
     const start = bank ? bankPt(false) : islandPt(0.2, 0.7), trail = [];
@@ -317,8 +317,8 @@ export function createSnakes(world, Q, scene) {
       s.nextSlow -= dt;
       if (s.state === 'crawl' && !s.dv && s.slowT <= 0 && s.nextSlow <= 0) {
         if (!inWater && R() < 0.2) startLurk(s); // sometimes hides on land instead: coils up to be less visible
-        else s.slowT = inWater ? 6 + R() * 9 : 4 + R() * 6;
-        s.nextSlow = 20 + R() * 25;
+        else s.slowT = inWater ? 3 + R() * 3 : 4 + R() * 6;
+        s.nextSlow = inWater ? 30 + R() * 20 : 20 + R() * 25;
       }
       if (s.slowT > 0) { s.slowT -= dt; if (s.state !== 'crawl') s.slowT = 0; }
       s.slowK += ((s.slowT > 0 ? 0.04 : 1) - s.slowK) * Math.min(1, dt * 0.9);
@@ -369,8 +369,11 @@ export function createSnakes(world, Q, scene) {
           // only at the hard limit does it stop advancing (rare, the look-ahead turns it well before)
           const soft = Hg(nx, nz) < -1.7 || (s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5);
           const hard = Hg(nx, nz) < -2.3 || (s.bank ? Math.abs(nx - bankX) > 29 : islandE(nx, nz) > 1.62);
-          if (soft) { s.axTh += step / Math.max(0.5, 0.55 * s.L); if (!s.backGoal) { s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); s.backGoal = true; } if (s.state === 'flee') s.state = 'crawl'; } else s.backGoal = false;
-          if (!hard) { s.hd.x = nx; s.hd.z = nz; s.th = hth; s.wph0 = wph; } // the wave phase only advances when the head really moves
+          if (soft) { // turn toward home (not a fixed side), so it never cancels the steering toward the goal
+            const hx = s.bank ? bankX : 0, hz = s.bank ? mz(bankX) + bankSide * hwAt(bankX) : zc0, hdir = Math.atan2(hz - s.hd.z, hx - s.hd.x);
+            const dd = Math.atan2(Math.sin(hdir - s.axTh), Math.cos(hdir - s.axTh)); s.axTh += Math.sign(dd) * Math.min(Math.abs(dd), 2 * step / Math.max(0.5, 0.55 * s.L)); if (!s.backGoal) { s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); s.backGoal = true; } if (s.state === 'flee') s.state = 'crawl'; } else s.backGoal = false;
+          const bad = (x, z) => Math.max(0, -Hg(x, z) - 2.3) + Math.max(0, (s.bank ? (Math.abs(x - bankX) - 29) / 20 : islandE(x, z) - 1.62));
+          if (!hard || bad(s.hd.x, s.hd.z) > 0) { /* already outside: keep swimming, the axis turns toward home */ s.hd.x = nx; s.hd.z = nz; s.th = hth; s.wph0 = wph; } else s.wph0 = wph; // blocked: let the swing move on so a better direction comes up // the wave phase only advances when the head really moves
           // axis follows the mean line of the head path
           const J = 1 - thMax * thMax / 4 + Math.pow(thMax, 4) / 64; // mean forward fraction of a serpenoid
           s.ax.x += Math.cos(s.axTh) * step * J; s.ax.z += Math.sin(s.axTh) * step * J;
@@ -385,10 +388,17 @@ export function createSnakes(world, Q, scene) {
       s.swimAmp += ((s.wet > 0.4 && s.spd > 0.03 ? 1 : 0.25) - s.swimAmp) * Math.min(1, dt * 1.5);
       // ---- drift with the current when floating still: the whole body moves, slowly turning head-upstream ----
       if (inWater && !(s.dv && s.dv.ph === 'bottom')) {
-        const sl = (mz(s.hd.x + 1) - mz(s.hd.x - 1)) / 2, fl = Math.hypot(1, sl), cv = (0.05 + 0.2 * sm(0.3, 1.2, depthHere)) * (s.dv ? 0.4 : 1) * sm(0.2, 0.8, s.wet);
+        const sl = (mz(s.hd.x + 1) - mz(s.hd.x - 1)) / 2, fl = Math.hypot(1, sl);
+        // fade the current near the limits: water deeper than 1.5 m and the edge of the home area (last ~2.5 m)
+        const fdx = 1 / fl * 2.5, fdz = sl / fl * 2.5, ax2 = s.hd.x + fdx, az2 = s.hd.z + fdz;
+        const edge = s.bank ? sm(25, 22.5, Math.abs(ax2 - bankX)) : sm(1.45, 1.32, islandE(ax2, az2));
+        const deepF = sm(1.5, 1.2, -Hg(ax2, az2));
+        const cv = (0.025 + 0.1 * sm(0.3, 1.2, depthHere)) * (s.dv ? 0.4 : 1) * sm(0.2, 0.8, s.wet) * edge * deepF;
+        // drifting close to an edge ends the slow phase: the snake swims back
+        if (s.slowT > 0 && (edge < 0.5 || deepF < 0.5)) { s.slowT = 0; s.goal = s.bank ? bankPt(true) : islandWater(); s.goalT = 0; }
         const fx = 1 / fl * cv * dt, fz = sl / fl * cv * dt;
         const nxh = s.hd.x + fx, nzh = s.hd.z + fz;
-        if (Hg(nxh, nzh) < -0.15 && (s.bank ? Math.abs(nxh - bankX) < 25 : islandE(nxh, nzh) < 1.45)) {
+        if (cv > 1e-4 && Hg(nxh, nzh) < -0.15 && Hg(nxh, nzh) > -1.5 && (s.bank ? Math.abs(nxh - bankX) < 25 : islandE(nxh, nzh) < 1.45)) {
           // while drifting slowly the snake turns head-upstream around the middle of its body
           const up = Math.atan2(-sl, -1), d = Math.atan2(Math.sin(up - s.axTh), Math.cos(up - s.axTh)), rot = Math.max(-0.08, Math.min(0.08, d)) * dt * (1 - s.slowK);
           const mid = s.trail[Math.min(s.trail.length - 1, 60)] || s.hd, cx = mid.x, cz = mid.z, c = Math.cos(rot), sn = Math.sin(rot);
