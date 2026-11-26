@@ -350,13 +350,14 @@ export function buildWorld(seed, Q) {
     function branch(p, dir, len, r, depth) {
       const end = p.clone().addScaledVector(dir, len);
       trunkAcc.add(limbGeo(p, end, r, r * 0.68, depth > 1 ? 7 : 5, 2), barkFn, swayT);
+      if (depth > 0) { const jg = new THREE.SphereGeometry(r * 0.72, depth > 1 ? 8 : 6, 5); jg.translate(end.x, end.y, end.z); trunkAcc.add(jg, barkFn, swayT); } // joint: hides seams at bends
       if (depth === 0) { leaves(end, (kind === 'birch' ? 0.94 : kind === 'willow' ? 0.95 : 1.15) + R() * 0.45); return; }
       const kids = kind === 'willow' ? (depth >= 2 ? 3 + (R() < 0.5 ? 1 : 0) : 3) : depth === 1 ? 3 : 2 + (R() < 0.5 ? 1 : 0);
       for (let k = 0; k < kids; k++) {
         const nd = kind === 'willow' && depth === 3
           ? dir.clone().multiplyScalar(0.8).add(new THREE.Vector3(-dir.x * 1.6, 0.25, -dir.z * 1.6)).add(new THREE.Vector3((R() - 0.5) * 0.9, R() * 0.3, (R() - 0.5) * 0.9)).normalize() // trunk curves back up
           : dir.clone().add(new THREE.Vector3((R() - 0.5) * 1.5, (kind === 'willow' ? 0.1 : 0.45) + R() * 0.4, (R() - 0.5) * 1.5)).normalize();
-        branch(end, nd, len * (kind === 'willow' && depth === 3 ? 0.75 : 0.62 + R() * 0.15), r * (kind === 'willow' && depth === 3 ? 0.75 : 0.62), depth - 1);
+        branch(end, nd, len * (kind === 'willow' && depth === 3 ? 0.75 : 0.62 + R() * 0.15), r * (kind === 'willow' && depth === 3 ? 0.68 : 0.62), depth - 1);
         if (kind === 'willow' && depth <= 2 && R() < 0.6) { // thin drooping shoot
           const sd = dir.clone().add(new THREE.Vector3((R() - 0.5) * 2, -0.2, (R() - 0.5) * 2)).normalize(), se = end.clone().addScaledVector(sd, len * 0.45);
           trunkAcc.add(limbGeo(end, se, r * 0.3, r * 0.12, 4, 1), barkFn, swayT);
@@ -629,16 +630,16 @@ export function buildWorld(seed, Q) {
   }
   // underwater weed on the shallow bed, swaying with the current
   {
-    const g = bladeGeo(0.06, 4, C('#5f7a2a'), C('#2c3d18'), 0.35);
+    const g = bladeGeo(0.07, 5, C('#4f6a1e'), C('#1e2e10'), 0.35);
     meshes.algae = instanced(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'algae', 0.9, { NOFLIP: '' }), Q.algae, (d) => {
       for (let t = 0; t < 40; t++) {
-        const near = R() < 0.4;
+        const near = R() < 0.55;
         let x, z;
         if (near) { const u = (R() * 2 - 1) * irx * 1.5, v = (R() * 2 - 1) * irz * 1.6; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
         else { x = (R() * 2 - 1) * 200; z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) - 1 - R() * 9); }
-        const h = H(x, z); if (h > -0.18 || h < -1.3) continue;
-        if (N.n2(x * 0.25, z * 0.25) < -0.1) continue;
-        const L = Math.min(-h - 0.06, 0.25 + R() * 0.55);
+        const h = H(x, z); if (h > -0.14 || h < -0.75) continue;
+        if (N.n2(x * 0.25, z * 0.25) < 0.05) continue;
+        const L = -h * (0.6 + R() * 0.33);
         d.position.set(x, h, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(0.8 + R() * 0.8, L, 1);
         return white;
       }

@@ -125,11 +125,12 @@ export function patch(mat, key, amp = 0, defs = {}) {
             float ripple = 0.5 + 0.5 * sin(dot(vWp.xz, vec2(3.1, 1.3)) + texture2D(tNoise, vWp.xz * 0.2).r * 6.0);
             float weed = smoothstep(0.55, 0.75, texture2D(tNoise, vWp.xz * 0.11 + 0.5).g);
             vec3 bed = outgoingLight * (0.88 + 0.16 * ripple);
-            bed = mix(bed, outgoingLight * vec3(0.55, 0.58, 0.55), stones * 0.7);
+            bed = mix(bed, outgoingLight * vec3(0.42, 0.4, 0.36), stones * 0.75);
             bed = mix(bed, outgoingLight * vec3(0.45, 0.7, 0.32), weed * 0.6);
             float ca = texture2D(tNoise, vWp.xz * 0.45 + vec2(uTime * 0.03, uTime * 0.017)).r, cb = texture2D(tNoise, vWp.xz * 0.52 - vec2(uTime * 0.021, -uTime * 0.025)).g;
-            float caus = pow(max(1.0 - abs(ca - cb) * 2.2, 0.0), 6.0);
-            bed += uSunCol * caus * 0.35 * uSunVis * uSunOcc * smoothstep(-1.5, -0.1, vWp.y);
+            float caus = pow(max(1.0 - abs(ca - cb) * 2.6, 0.0), 14.0);
+            bed *= vec3(0.74, 0.78, 0.7);
+            bed += uSunCol * vec3(1.0, 0.85, 0.55) * caus * 0.1 * uSunVis * uSunOcc * smoothstep(-1.6, -0.35, vWp.y) * smoothstep(-0.12, -0.35, vWp.y);
             outgoingLight = mix(outgoingLight, bed, uw);
           }
           float dn = texture2D(tNoise, vWp.xz*0.19).a*0.55 + texture2D(tNoise, vWp.xz*0.83).g*0.45;
@@ -341,11 +342,11 @@ export function waterMaterial() {
         col += vec3(0.75, 0.8, 1.0) * pow(max(dot(R, uMoonDir), 0.0), 220.0) * 3.0 * uMoonVis * uMoonOcc * (1.0 - uDark);
         // shoreline foam
         float fn = texture2D(tNoise, vWp.xz*0.35 + vec2(uTime*0.05, 0.0)).a;
-        float foam = smoothstep(0.22, 0.0, depth + (fn - 0.5)*0.18) * (0.55 + 0.45*sin(uTime*1.6 + depth*30.0 + fn*6.0));
-        col = mix(col, (uAmb + uSunCol*uSunVis)*0.75, clamp(foam, 0.0, 1.0)*0.6);
+        float foam = smoothstep(0.07, 0.0, depth + (fn - 0.5)*0.06 + 0.03*sin(uTime*0.9 + fn*5.0)) * (0.5 + 0.5*fn);
+        col = mix(col, (uAmb + uSunCol*uSunVis)*vec3(0.55, 0.55, 0.5), clamp(foam, 0.0, 1.0)*0.22);
         col += vec3(0.75, 0.8, 1.0) * uFlash * 0.5;
-        float clearW = 1.0 - smoothstep(0.15, 0.75, depth); // ~2 m strip along the shore
-        float alpha = clamp(mix(0.42, 0.97, smoothstep(0.0, 1.4, depth)) * (1.0 - clearW * 0.82) + fres * mix(0.5, 0.25, clearW) + foam*0.4, 0.0, 1.0);
+        float clearW = 1.0 - smoothstep(0.35, 1.7, depth); // ~5 m strip along the shore
+        float alpha = clamp(mix(0.42, 0.97, smoothstep(0.0, 1.4, depth)) * (1.0 - clearW * 0.82) + fres * mix(0.5, 0.25, clearW) + foam*0.15, 0.0, 1.0);
         gl_FragColor = vec4(col, alpha);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
