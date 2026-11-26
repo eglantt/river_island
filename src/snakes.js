@@ -27,7 +27,7 @@ export function createSnakes(world, Q, scene) {
       {
         // vS.x: metres from the snout along the body, vS.y: 0..1 around (0 = spine, 0.5 = belly centre)
         float a = vS.y * 6.2831853, ca = cos(a), along = vS.x;
-        float belly = smoothstep(-0.78, -0.9, ca);
+        float belly = (1.0 - smoothstep(-0.9, -0.78, ca));
         // dorsal scales: 19 rows around, diamond cells offset per row, dark seams and a keel highlight
         float rows = 19.0, sv = vS.y * rows, su = along / 0.0062 + 0.5 * mod(floor(sv), 2.0);
         vec2 f = fract(vec2(su, sv)) - 0.5;
@@ -165,7 +165,7 @@ export function createSnakes(world, Q, scene) {
     snakes.push({
       bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: trail.wph0, wph: 0, amp: 0.85, swimAmp: 0.25,
       spd: 0, state: 'crawl', goal: null, stateT: 0, tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, flat: 0, hidden: 0, wet: 0, look: 0, curLook: 0, lookT: 0, splashed: false,
-      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), dep: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined, hdY: 0, dv: null, diveCD: 60 + R() * 120, sinceDive: 61, fleeDive: false,
+      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), dep: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined, slowT: 0, slowK: 1, turnK: 0, nextSlow: 10 + R() * 20, lurk: false, lurked: false, hdY: 0, dv: null, diveCD: 60 + R() * 120, sinceDive: 61, fleeDive: false,
     });
   }
 
@@ -252,6 +252,7 @@ export function createSnakes(world, Q, scene) {
     for (; i < NODES; i++) out[i].copy(out[i - 1]);
   };
   const snkU = U.uSnk.value, snkB = U.uSnB.value;
+  const startLurk = (s) => { s.state = 'pose'; s.lurk = true; s.slowT = 0; s.poseKind = R() < 0.65 ? 'flat' : 'ring'; s.pose = posePath(s, s.poseKind); s.poseI = 0; };
 
   function update(dt, t, env) {
     dt = Math.min(dt, 0.1);
@@ -270,6 +271,8 @@ export function createSnakes(world, Q, scene) {
         s.goal = new V(w.x - s.hd.x, 0, w.z - s.hd.z).normalize().dot(away) > 0 ? w : s.hd.clone().addScaledVector(away, 4);
       }
       const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
+      if (dp > 9) s.lurked = false;
+      if (!s.noFlee && cam && !s.lurked && dp > 3 && dp < 6 && !inWater && (s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) { s.lurked = true; if (R() < 0.5) startLurk(s); }
       if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.1); s.splashed = true; }
       if (!inWater) s.splashed = false;
       s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 0.8);
@@ -282,7 +285,6 @@ export function createSnakes(world, Q, scene) {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
         want = s.state === 'flee' ? (inWater ? 0.69 : 0.56) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
         if (s.state === 'flee') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
-        if (s.state === 'crawl' && !inWater && Math.sin(t * 0.21 + k * 2.1) > 0.88) want *= 0.03; // short pauses
         if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
         else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
@@ -311,8 +313,16 @@ export function createSnakes(world, Q, scene) {
         else if (dv.ph === 'up') { s.hdY = Math.min(0, s.hdY + stepH); if (s.hdY >= 0) { s.hdY = 0; s.dv = null; env.ripple(s.hd.x, s.hd.z, 0.1); } }
         if (s.dv) { if (s.dv.ph === 'bottom') want = 0; else if (s.dv.ph === 'under') want *= 0.8; else want = Math.max(0.18, want * 0.85); }
       }
-      // short pauses on the water surface (the current then carries the snake)
-      if (inWater && !s.dv && s.state === 'crawl' && Math.sin(t * 0.17 + k * 1.3) > 0.9) want = 0;
+      // slow phases instead of stopping: speed eases down to ~4 % (still writhing, carried by the current), then back up
+      s.nextSlow -= dt;
+      if (s.state === 'crawl' && !s.dv && s.slowT <= 0 && s.nextSlow <= 0) {
+        if (!inWater && R() < 0.2) startLurk(s); // sometimes hides on land instead: coils up to be less visible
+        else s.slowT = inWater ? 6 + R() * 9 : 4 + R() * 6;
+        s.nextSlow = 20 + R() * 25;
+      }
+      if (s.slowT > 0) { s.slowT -= dt; if (s.state !== 'crawl') s.slowT = 0; }
+      s.slowK += ((s.slowT > 0 ? 0.04 : 1) - s.slowK) * Math.min(1, dt * 0.9);
+      if (s.state === 'crawl' && !s.dv) want *= s.slowK;
       if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
       s.spd += (want - s.spd) * Math.min(1, dt * 2.5);
       s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
@@ -327,7 +337,7 @@ export function createSnakes(world, Q, scene) {
             if (d <= rem) { s.hd.x = px; s.hd.z = pz; rem -= d; s.poseI++; } else { s.hd.x += (px - s.hd.x) / d * rem; s.hd.z += (pz - s.hd.z) / d * rem; rem = 0; }
           }
           const tr = s.trail[0]; if (tr) s.th = Math.atan2(s.hd.z - tr.z, s.hd.x - tr.x);
-          if (s.poseI >= s.pose.length) { s.state = 'bask'; s.stateT = 35 + R() * 60; s.spd = 0; }
+          if (s.poseI >= s.pose.length) { s.state = 'bask'; s.stateT = s.lurk ? 10 + R() * 30 : 35 + R() * 60; s.lurk = false; s.spd = 0; }
           s.ax.set(s.hd.x, 0, s.hd.z); s.axTh = s.th; s.amp = 0.7;
         } else {
           // steer the axis toward the goal, around trunks and rocks
@@ -337,19 +347,30 @@ export function createSnakes(world, Q, scene) {
             const dx = ox - s.hd.x, dz = oz - s.hd.z, dd = Math.hypot(dx, dz);
             if (dd < orr + 0.6) { const fa = Math.atan2(dz, dx), rel = Math.atan2(Math.sin(fa - s.axTh), Math.cos(fa - s.axTh)); if (Math.abs(rel) < 1.4) dTh += (rel > 0 ? -1 : 1) * 1.6 * (1 - (dd - orr) / 0.6); }
           }
-          { const lx = s.ax.x + Math.cos(s.axTh) * 0.6, lz = s.ax.z + Math.sin(s.axTh) * 0.6;
+          { const lx = s.ax.x + Math.cos(s.axTh) * 1.1, lz = s.ax.z + Math.sin(s.axTh) * 1.1;
             if (Hg(lx, lz) < -1.6 || (s.bank ? Math.abs(lx - bankX) > 25 : islandE(lx, lz) > 1.45)) dTh += 1.2; }
-          const maxTurn = s.spd / (s.wet > 0.5 ? 0.35 : 0.22) * dt; // turning radius limit: no sharp corners in the path
-          s.axTh += Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
+          // wide turns only: the axis turns on a radius of at least ~half the body length, so a U-turn is a broad arc
+          const Rt = Math.max(0.5, 0.55 * s.L), maxTurn = step / Rt;
+          const dA = Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
+          s.axTh += dA;
+          s.turnK += (Math.min(1, Math.abs(dA) / Math.max(1e-6, maxTurn)) * Math.sign(dA) - s.turnK) * Math.min(1, dt * 2);
           // land: serpenoid path — the heading swings ±~70° sinusoidally with the distance crawled, giving round U-loops
           // with straight flanks (wave length along the body ~0.42 L); in the water the head goes almost straight
-          const thMax = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
-          const wph = s.wph0 + 2 * Math.PI * step / lam;
-          const hth = s.axTh + thMax * Math.sin(wph);
+          // loops get smaller while turning, more on the inner side of the turn
+          const tk = Math.abs(s.turnK), thMax = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1) * (1 - 0.1 * tk), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
+          const wph = s.wph0 + 2 * Math.PI * step / lam, sw = Math.sin(wph);
+          let hth = s.axTh + thMax * sw * (sw * s.turnK > 0 ? 1 - 0.12 * tk : 1);
+          // never crawl over or through its own body: if the next head point comes close to the body, swing away
+          const clear = (a) => { const x = s.hd.x + Math.cos(a) * 0.05, z = s.hd.z + Math.sin(a) * 0.05; let m = 9; for (let q = 30; q < s.trail.length; q += 3) { const p = s.trail[q], d = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z); if (d < m) m = d; } return Math.sqrt(m); };
+          const minC = 4.2 * s.rMax;
+          if (clear(hth) < minC) { let best = hth, bc = -1; for (const o of [0.35, -0.35, 0.7, -0.7, 1.1, -1.1]) { const c = clear(hth + o); if (c > bc) { bc = c; best = hth + o; } if (c >= minC) break; } s.axTh += (best - hth) * 0.3; hth = best; }
           const nx = s.hd.x + Math.cos(hth) * step, nz = s.hd.z + Math.sin(hth) * step;
-          const tooDeep = Hg(nx, nz) < -1.7, offHome = s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5;
-          if (tooDeep || offHome) { s.axTh += s.spd / 0.3 * dt; s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); if (s.state === 'flee') s.state = 'crawl'; }
-          else { s.hd.x = nx; s.hd.z = nz; s.th = hth; s.wph0 = wph; } // the wave phase only advances when the head really moves
+          // soft limit: near the edge of its area (or too deep) the snake keeps moving while turning back on a wide arc;
+          // only at the hard limit does it stop advancing (rare, the look-ahead turns it well before)
+          const soft = Hg(nx, nz) < -1.7 || (s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5);
+          const hard = Hg(nx, nz) < -2.3 || (s.bank ? Math.abs(nx - bankX) > 29 : islandE(nx, nz) > 1.62);
+          if (soft) { s.axTh += step / Math.max(0.5, 0.55 * s.L); if (!s.backGoal) { s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); s.backGoal = true; } if (s.state === 'flee') s.state = 'crawl'; } else s.backGoal = false;
+          if (!hard) { s.hd.x = nx; s.hd.z = nz; s.th = hth; s.wph0 = wph; } // the wave phase only advances when the head really moves
           // axis follows the mean line of the head path
           const J = 1 - thMax * thMax / 4 + Math.pow(thMax, 4) / 64; // mean forward fraction of a serpenoid
           s.ax.x += Math.cos(s.axTh) * step * J; s.ax.z += Math.sin(s.axTh) * step * J;
@@ -363,13 +384,13 @@ export function createSnakes(world, Q, scene) {
       }
       s.swimAmp += ((s.wet > 0.4 && s.spd > 0.03 ? 1 : 0.25) - s.swimAmp) * Math.min(1, dt * 1.5);
       // ---- drift with the current when floating still: the whole body moves, slowly turning head-upstream ----
-      if (inWater && s.spd < 0.05 && !(s.dv && s.dv.ph === 'bottom')) {
-        const sl = (mz(s.hd.x + 1) - mz(s.hd.x - 1)) / 2, fl = Math.hypot(1, sl), cv = (0.04 + 0.03 * Math.min(1, depthHere / 1.2)) * (1 - s.spd / 0.05);
+      if (inWater && !(s.dv && s.dv.ph === 'bottom')) {
+        const sl = (mz(s.hd.x + 1) - mz(s.hd.x - 1)) / 2, fl = Math.hypot(1, sl), cv = (0.05 + 0.2 * sm(0.3, 1.2, depthHere)) * (s.dv ? 0.4 : 1) * sm(0.2, 0.8, s.wet);
         const fx = 1 / fl * cv * dt, fz = sl / fl * cv * dt;
         const nxh = s.hd.x + fx, nzh = s.hd.z + fz;
         if (Hg(nxh, nzh) < -0.15 && (s.bank ? Math.abs(nxh - bankX) < 25 : islandE(nxh, nzh) < 1.45)) {
-          // slow turn toward upstream around the middle of the body
-          const up = Math.atan2(-sl, -1), d = Math.atan2(Math.sin(up - s.axTh), Math.cos(up - s.axTh)), rot = Math.max(-0.08, Math.min(0.08, d)) * dt;
+          // while drifting slowly the snake turns head-upstream around the middle of its body
+          const up = Math.atan2(-sl, -1), d = Math.atan2(Math.sin(up - s.axTh), Math.cos(up - s.axTh)), rot = Math.max(-0.08, Math.min(0.08, d)) * dt * (1 - s.slowK);
           const mid = s.trail[Math.min(s.trail.length - 1, 60)] || s.hd, cx = mid.x, cz = mid.z, c = Math.cos(rot), sn = Math.sin(rot);
           const mv = (p) => { const x = p.x - cx, z = p.z - cz; p.x = cx + x * c - z * sn + fx; p.z = cz + x * sn + z * c + fz; };
           mv(s.hd); mv(s.ax); for (const p of s.trail) mv(p); for (const p of s.axTrail) mv(p);

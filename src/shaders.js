@@ -76,6 +76,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
   mat.onBeforeCompile = (sh) => {
     for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
+    sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\nif (any(isnan(gl_FragColor)) || any(isinf(gl_FragColor))) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); // never feed NaN/Inf to bloom');
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
@@ -124,7 +125,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
         #endif
         #ifdef DETAIL
           if (vWp.y < -0.02) {
-            float uw = smoothstep(-0.02, -0.25, vWp.y);
+            float uw = (1.0 - smoothstep(-0.25, -0.02, vWp.y));
             float peb = texture2D(tNoise, vWp.xz * 2.7).a, peb2 = texture2D(tNoise, vWp.xz * 6.1 + 0.3).r;
             float stones = smoothstep(0.62, 0.7, peb) * 0.6 + smoothstep(0.66, 0.72, peb2) * 0.4;
             float ripple = 0.5 + 0.5 * sin(dot(vWp.xz, vec2(3.1, 1.3)) + texture2D(tNoise, vWp.xz * 0.2).r * 6.0);
@@ -135,7 +136,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
             float ca = texture2D(tNoise, vWp.xz * 0.45 + vec2(uTime * 0.03, uTime * 0.017)).r, cb = texture2D(tNoise, vWp.xz * 0.52 - vec2(uTime * 0.021, -uTime * 0.025)).g;
             float caus = pow(max(1.0 - abs(ca - cb) * 2.6, 0.0), 14.0);
             bed *= vec3(0.74, 0.78, 0.7);
-            bed += uSunCol * vec3(1.0, 0.85, 0.55) * caus * 0.1 * uSunVis * uSunOcc * smoothstep(-1.6, -0.35, vWp.y) * smoothstep(-0.12, -0.35, vWp.y);
+            bed += uSunCol * vec3(1.0, 0.85, 0.55) * caus * 0.1 * uSunVis * uSunOcc * smoothstep(-1.6, -0.35, vWp.y) * (1.0 - smoothstep(-0.35, -0.12, vWp.y));
             outgoingLight = mix(outgoingLight, bed, uw);
           }
           float dn = texture2D(tNoise, vWp.xz*0.19).a*0.55 + texture2D(tNoise, vWp.xz*0.83).g*0.45;
@@ -194,7 +195,7 @@ export function skyMaterial() {
             if (h > 0.965) {
               vec3 o = vec3(hash(c+1.3), hash(c+2.7), hash(c+5.1)) - 0.5;
               float dist = length(fract(p) - 0.5 - o*0.55);
-              float s = smoothstep(0.17, 0.0, dist) * (0.35 + (h-0.965)/0.035);
+              float s = (1.0 - smoothstep(0.0, 0.17, dist)) * (0.35 + (h-0.965)/0.035);
               float tw = 0.65 + 0.35*sin(uTime*(1.5 + h*9.0) + h*80.0);
               col += vec3(0.85, 0.9, 1.0) * s * tw * 1.4 * uNight * smoothstep(0.0, 0.25, d.y);
             }
@@ -214,7 +215,7 @@ export function skyMaterial() {
               float term = cos(ph) * sqrt(max(1.0 - q.y*q.y, 0.0));
               float lit = uMoonPhase < 0.5 ? smoothstep(-0.06, 0.06, q.x - term) : smoothstep(-0.06, 0.06, -q.x - term);
               float maria = 0.78 + 0.22*texture2D(tNoise, q*0.18 + 0.3).r;
-              float edge = smoothstep(1.0, 0.92, r);
+              float edge = (1.0 - smoothstep(0.92, 1.0, r));
               col = mix(col, vec3(1.0, 0.97, 0.88) * maria * (0.08 + 1.4*lit), edge * uMoonVis);
             }
           }
@@ -242,7 +243,7 @@ export function skyMaterial() {
             vec3 rb = clamp(vec3(abs(t * 6.0 - 3.6) - 1.0, 2.0 - abs(t * 6.0 - 2.4), 2.0 - abs(t * 6.0 - 1.2)), 0.0, 1.0);
             float a = smoothstep(-0.3, 0.1, t) * (1.0 - smoothstep(0.9, 1.3, t)) * smoothstep(0.0, 0.08, d.y);
             col += rb * a * uRainbow * 0.5 * (1.0 - cov * 0.5);
-            col += vec3(0.5, 0.52, 0.55) * smoothstep(0.0, -0.3, t) * smoothstep(-1.2, -0.3, t) * uRainbow * 0.05;
+            col += vec3(0.5, 0.52, 0.55) * (1.0 - smoothstep(-0.3, 0.0, t)) * smoothstep(-1.2, -0.3, t) * uRainbow * 0.05;
           }
         }
         float hb = uFogSky * (1.0 - smoothstep(-0.02, 0.22 + 0.55*uFogSky, d.y));
@@ -298,7 +299,7 @@ export function waterMaterial() {
             float t = fract(uTime*0.9 + rnd);
             vec2 c = (id + 0.25 + 0.5*vec2(h21(id+3.1), h21(id+7.7))) * 0.7;
             vec2 dv = vWp.xz - c; float d = length(dv), r = t*0.55;
-            float w = sin((d - r)*22.0) * exp(-abs(d - r)*9.0) * (1.0 - t) * (1.0 - t) * 0.5 * smoothstep(0.75, 0.55, d);
+            float w = sin((d - r)*22.0) * exp(-abs(d - r)*9.0) * (1.0 - t) * (1.0 - t) * 0.5 * (1.0 - smoothstep(0.55, 0.75, d));
             if (d > 0.001) nxy += dv/d * w;
           }
         }
@@ -374,7 +375,7 @@ export function waterMaterial() {
           float u = fract(atan(R.z, R.x) / 6.2831853 + 1.0);
           float hz = texture2D(tHzn, vec2(u, 0.5)).r * 0.4 - 0.05;
           float rel = asin(clamp(R.y, 0.0, 1.0));
-          float mtn = smoothstep(hz + 0.004, hz - 0.004, rel);
+          float mtn = (1.0 - smoothstep(hz - 0.004, hz + 0.004, rel));
           vec3 vdf = normalize(vec3(R.x, max(R.y, 0.015), R.z));
           float sdm = max(dot(vdf, uSunDir), 0.0), sunLow = 1.0 - smoothstep(0.04, 0.4, uSunDir.y);
           vec3 mcol = mix(uSkyFog, uHor + uGlow * pow(sdm, 4.0) * 0.22 * (1.0 - uDark), 0.55 * (1.0 - uFogSky)) * (0.8 - 0.32 * pow(sdm, 3.0) * sunLow * (1.0 - uDark));
@@ -397,7 +398,7 @@ export function waterMaterial() {
           float hx = vWp.x + Rs.x*tz;
           float th = 15.0 + 9.0*texture2D(tNoise, vec2(hx*0.004, side*0.3)).g + 7.0*texture2D(tNoise, vec2(hx*0.017, 0.2)).r;
           float hs = Rs.y * tz, ew = 2.5 + min(fwidth(hs) * 2.0, 6.0);
-          float tree = smoothstep(th + ew, th - ew, hs);
+          float tree = (1.0 - smoothstep(th - ew, th + ew, hs));
           vec3 forest = uAmb * vec3(0.16, 0.24, 0.13) * 1.6 + uSunCol*uSunVis*uSunOcc*vec3(0.06,0.08,0.03);
           refl = mix(refl, forest, tree * 0.92);
         }
@@ -412,7 +413,7 @@ export function waterMaterial() {
         col += vec3(0.75, 0.8, 1.0) * pow(max(dot(R, uMoonDir), 0.0), 220.0) * 3.0 * uMoonVis * uMoonOcc * (1.0 - uDark);
         // shoreline foam
         float fn = texture2D(tNoise, vWp.xz*0.35 + vec2(uTime*0.05, 0.0)).a;
-        float foam = smoothstep(0.07, 0.0, depth + (fn - 0.5)*0.06 + 0.03*sin(uTime*0.9 + fn*5.0)) * (0.5 + 0.5*fn);
+        float foam = (1.0 - smoothstep(0.0, 0.07, depth + (fn - 0.5)*0.06 + 0.03*sin(uTime*0.9 + fn*5.0))) * (0.5 + 0.5*fn);
         col = mix(col, (uAmb + uSunCol*uSunVis)*vec3(0.55, 0.55, 0.5), clamp(foam, 0.0, 1.0)*0.22);
         col += vec3(0.75, 0.8, 1.0) * uFlash * 0.5;
         float clearW = 1.0 - smoothstep(0.35, 1.7, depth); // ~5 m strip along the shore
@@ -423,6 +424,7 @@ export function waterMaterial() {
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
         #include <fog_fragment>
+        if (any(isnan(gl_FragColor)) || any(isinf(gl_FragColor))) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); // never feed NaN/Inf to bloom
       }`,
   });
   Object.assign(m.uniforms, U);
@@ -480,7 +482,7 @@ export function pointsMaterial(kind) {
         `}
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         gl_PointSize = ${ff ? '0.32' : '0.03'} * uPx / -mv.z;
-        ${ff ? 'vB *= clamp(gl_PointSize / 4.0, 0.4, 1.0); gl_PointSize = clamp(gl_PointSize, 2.5, 30.0);' : 'gl_PointSize = clamp(gl_PointSize, 1.0, 3.0); vB *= smoothstep(7.0, 1.5, -mv.z);'}
+        ${ff ? 'vB *= clamp(gl_PointSize / 4.0, 0.4, 1.0); gl_PointSize = clamp(gl_PointSize, 2.5, 30.0);' : 'gl_PointSize = clamp(gl_PointSize, 1.0, 3.0); vB *= (1.0 - smoothstep(1.5, 7.0, -mv.z));'}
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */`
@@ -488,10 +490,10 @@ export function pointsMaterial(kind) {
       void main(){
         vec2 c = gl_PointCoord - 0.5; float r = length(c);
         ${ff ? `
-          float g = smoothstep(0.5, 0.0, r); g = g*g*0.6 + smoothstep(0.09, 0.0, r);
+          float g = (1.0 - smoothstep(0.0, 0.5, r)); g = g*g*0.6 + (1.0 - smoothstep(0.0, 0.09, r));
           gl_FragColor = vec4(vec3(0.75, 1.0, 0.35) * g * vB * uFF * 1.6, 1.0);
         ` : `
-          float g = smoothstep(0.5, 0.1, r);
+          float g = (1.0 - smoothstep(0.1, 0.5, r));
           gl_FragColor = vec4(uSunCol * vec3(1.0, 0.85, 0.6) * g * vB * uDust * 0.22, 1.0);
         `}
       }`,
@@ -510,7 +512,7 @@ export function mistMaterial() {
         float n2 = texture2D(tNoise, vWp.xz*0.031 - vec2(uTime*0.004, 0.0)).g;
         float a = smoothstep(0.35, 0.85, n*0.65 + n2*0.35) * uMist;
         float d = length(vWp.xz - uCam.xz);
-        a *= smoothstep(3.0, 14.0, d) * smoothstep(900.0, 300.0, d);
+        a *= smoothstep(3.0, 14.0, d) * (1.0 - smoothstep(300.0, 900.0, d));
         gl_FragColor = vec4(uFogCol*1.05, a*0.55);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
