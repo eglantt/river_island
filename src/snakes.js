@@ -44,9 +44,9 @@ export function createSnakes(world, Q, scene) {
         bel *= 1.0 - 0.35 * smoothstep(0.42, 0.5, abs(fract(along / 0.0075) - 0.5));
         vec3 col = mix(dors, bel, belly);
         // yellow "ears" behind the head with black edge behind them (flanks only)
-        float neck = smoothstep(0.0, 0.004, along) * (1.0 - smoothstep(0.022, 0.027, along)) * smoothstep(0.5, 0.75, abs(sin(a))) * smoothstep(-0.1, 0.25, -ca + 0.3) * (1.0 - belly);
-        float blk = smoothstep(0.023, 0.028, along) * (1.0 - smoothstep(0.04, 0.046, along)) * smoothstep(0.05, 0.3, abs(sin(a))) * (1.0 - belly);
-        col = mix(col, vec3(0.95, 0.78, 0.22), neck); col = mix(col, vec3(0.03, 0.03, 0.03), blk);
+        float neck = smoothstep(0.0, 0.003, along) * (1.0 - smoothstep(0.024, 0.029, along)) * smoothstep(0.35, 0.6, abs(sin(a))) * smoothstep(-0.1, 0.25, -ca + 0.45) * (1.0 - belly);
+        float blk = smoothstep(0.026, 0.03, along) * (1.0 - smoothstep(0.042, 0.048, along)) * smoothstep(0.05, 0.3, abs(sin(a))) * (1.0 - belly);
+        col = mix(col, vec3(1.0, 0.8, 0.25), neck); col = mix(col, vec3(0.03, 0.03, 0.03), blk);
         diffuseColor.rgb = mix(col, vec3(0.05, 0.11, 0.1), clamp(-vWp.y * 22.0, 0.0, 0.55));
       }`);
     };
@@ -55,29 +55,39 @@ export function createSnakes(world, Q, scene) {
 
   // ---------- head geometry (local: +x forward, origin at the back of the head) ----------
   function headGeo(base) {
-    const g = new THREE.SphereGeometry(1, 18, 12), P = g.attributes.position, v = new V(), cols = [];
-    const dark = base.clone().multiplyScalar(0.9), lab = new THREE.Color(0.9, 0.88, 0.8), blk = new THREE.Color(0.04, 0.04, 0.04);
+    // 3.8 x 2.4 x 1.4 cm: egg-shaped from above (widest behind the eyes), rounded snout, flat crown, full cheeks
+    const HL = 0.038, g = new THREE.SphereGeometry(1, 28, 18), P = g.attributes.position, v = new V(), cols = [];
+    const wAt = (u) => 0.0105 * Math.pow(Math.max(0, 1 - Math.pow((u - 0.32) / (u > 0.32 ? 0.7 : 0.5), 2)), 0.6) + 0.0012;
+    const hAt = (u) => 0.0068 * Math.pow(Math.max(0, 1 - Math.pow((u - 0.3) / (u > 0.3 ? 0.75 : 0.5), 2)), 0.45) + 0.0012;
+    const dark = base.clone().multiplyScalar(0.85), plate = base.clone().multiplyScalar(1.15), lab = new THREE.Color(0.9, 0.88, 0.78), blk = new THREE.Color(0.03, 0.03, 0.03);
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i);
-      const u = (v.x + 1) / 2; // 0 back .. 1 snout
-      const w = 0.0085 * (1 - 0.32 * u * u) + 0.001, hgt = 0.0062 * (1 - 0.3 * u);
-      let y = v.y * hgt; if (y > 0.003) y = 0.003 + (y - 0.003) * 0.6; // flat crown
-      if (v.y < -0.2) y *= 0.8;
-      P.setXYZ(i, u * 0.03, y, v.z * w);
-      // colours: dark crown, white labials with black bars on the lower sides, pale chin
+      const u = (v.x + 1) / 2, w = wAt(u), h = hAt(u);
+      let y = v.y * h; if (y > h * 0.45) y = h * 0.45 + (y - h * 0.45) * 0.45; // flat crown
+      if (v.y < 0) y *= 0.85;
+      const cheek = 1 + 0.08 * Math.exp(-Math.pow((u - 0.25) / 0.15, 2)) * (v.y < 0.3 ? 1 : 0);
+      P.setXYZ(i, u * HL, y + 0.0005, v.z * w * cheek);
+      // colours: dark plates with seams on the crown, white labials with black bars, pale chin
       let c = dark;
-      if (v.y < -0.05 && v.y > -0.55 && u > 0.15) c = Math.abs(Math.sin(u * 26)) < 0.18 ? blk : lab;
-      else if (v.y <= -0.55) c = lab;
+      const side = Math.abs(v.z), top = v.y;
+      if (top > 0.55) { // crown plates: midline seam and transverse seams
+        const seam = (Math.abs(v.z) < 0.06 && u > 0.25 && u < 0.62) || Math.abs(u - 0.62) < 0.02 || Math.abs(u - 0.8) < 0.015 || Math.abs(u - 0.25) < 0.02;
+        c = seam ? blk : plate;
+      } else if (top < -0.05 && top > -0.6 && u > 0.12 && side > 0.25) c = Math.abs(Math.sin(u * 30)) < 0.2 ? blk : lab;
+      else if (top <= -0.6) c = lab;
       cols.push(c.r, c.g, c.b);
     }
     g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); g.computeVertexNormals();
-    // eyes: large, round, dark with a glint, high on the sides toward the front
     const parts = [g];
+    // eyes: large and round, dark iris with a pale ring, on the sides toward the snout, under a small brow plate
+    const eu = 0.64, ew = wAt(eu), ey = hAt(eu) * 0.25;
     for (const sd of [-1, 1]) {
-      const e = new THREE.SphereGeometry(0.0025, 10, 8).scale(1, 1, 0.75).translate(0.02, 0.0018, sd * 0.0062);
-      const n = e.attributes.position.count; e.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(0.02), 3)); parts.push(e);
-      const ring = new THREE.TorusGeometry(0.0025, 0.0005, 4, 12).rotateX(Math.PI / 2).rotateX(sd * 0.3).translate(0.02, 0.0018, sd * 0.006);
-      const nr = ring.attributes.position.count; ring.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nr }, () => [0.55, 0.45, 0.2]).flat(), 3)); parts.push(ring);
+      const e = new THREE.SphereGeometry(0.0029, 12, 10).scale(1, 1, 0.45).translate(eu * HL, ey, sd * (ew - 0.0016));
+      const n = e.attributes.position.count; e.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(n * 3).fill(0.015), 3)); parts.push(e);
+      const ring = new THREE.TorusGeometry(0.0029, 0.00045, 5, 16).rotateX(Math.PI / 2).rotateX(sd * 0.35).translate(eu * HL, ey, sd * (ew - 0.0019));
+      const nr = ring.attributes.position.count; ring.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nr }, () => [0.62, 0.5, 0.25]).flat(), 3)); parts.push(ring);
+      const brow = new THREE.SphereGeometry(0.003, 8, 6).scale(1.4, 0.4, 0.8).translate(eu * HL - 0.0005, ey + 0.0032, sd * (ew - 0.0026));
+      const nb = brow.attributes.position.count; brow.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nb }, () => [plate.r, plate.g, plate.b]).flat(), 3)); parts.push(brow);
     }
     return merge(parts);
   }
@@ -122,7 +132,7 @@ export function createSnakes(world, Q, scene) {
   ];
   const snakes = [];
   for (let k = 0; k < 3; k++) {
-    const bank = k === 2, L = 0.75 + R() * 0.25, look = looks[k];
+    const bank = k === 2, L = 1.0 + R() * 0.25, look = looks[k];
     const mat = mkMat(look.base, look.spots, L);
     // body tube
     const nV = NODES * (RAD + 1), pos = new Float32Array(nV * 3), nor = new Float32Array(nV * 3), aS = new Float32Array(nV * 2), idx = [];
@@ -132,11 +142,11 @@ export function createSnakes(world, Q, scene) {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('aS', new THREE.BufferAttribute(aS, 2));
     g.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(nV), 1)); g.setIndex(idx);
     const body = new THREE.Mesh(g, mat); body.frustumCulled = false; body.castShadow = true; body.receiveShadow = true; scene.add(body);
-    const hm = patch(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 50, specular: new THREE.Color(0.2, 0.2, 0.2) }), 'snakeH', 0);
+    const hm = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'snakeH', 0);
     const head = new THREE.Mesh(headGeo(look.base), hm); head.castShadow = true; scene.add(head);
     const tg = tongueGeo(); tg.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(tg.attributes.position.count), 1));
     const tongue = new THREE.Mesh(tg, patch(new THREE.MeshLambertMaterial({ color: 0x141012, side: THREE.DoubleSide }), 'tongue', 0)); head.add(tongue);
-    tongue.position.set(0.029, -0.0012, 0); tongue.scale.set(0.001, 1, 1);
+    tongue.position.set(0.038, -0.0008, 0); tongue.scale.set(0.001, 1, 1);
     // initial trail: a gentle S on land
     const start = bank ? bankPt(false) : islandPt(0.2, 0.7), trail = [];
     const a0 = R() * 6.28;
@@ -144,7 +154,7 @@ export function createSnakes(world, Q, scene) {
     snakes.push({
       bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: 0, wph: 0, amp: 0, swimAmp: 0.25,
       spd: 0, state: 'crawl', goal: null, stateT: 0, tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, flat: 0, hidden: 0, wet: 0, look: 0, curLook: 0, lookT: 0, splashed: false,
-      rMax: L * 0.0165, lifts: new Float32Array(NODES), pose: null, poseI: 0,
+      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined,
     });
   }
 
@@ -161,7 +171,7 @@ export function createSnakes(world, Q, scene) {
   const Pl = [], Pw = [], Pn = [], Tn = [];
   for (let i = 0; i < NODES; i++) { Pl.push(new V()); Pw.push(new V()); Pn.push(new V()); Tn.push(new V()); }
   const radius = (s, u) => { // u: 0 snout .. 1 tail tip
-    const neck = 0.58 + 0.42 * sm(0.0, 0.13, u), tail = 1 - sm(0.7, 1.0, u) * 0.9;
+    const neck = 0.6 + 0.4 * sm(0.0, 0.12, u), tail = 1 - sm(0.68, 1.0, u) * 0.9;
     return s.rMax * neck * tail * (1 + 0.05 * Math.sin(u * 40));
   };
   // basking poses, drawn tail -> head as turtle segments [length (fraction of L), turn (rad, + = left)]
@@ -247,15 +257,15 @@ export function createSnakes(world, Q, scene) {
       const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
       if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.1); s.splashed = true; }
       if (!inWater) s.splashed = false;
-      s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 1.2);
+      s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 0.8);
       // speed per state
       let want = 0;
       if (s.state === 'bask') { s.stateT -= dt; if (s.stateT <= 0) { pickGoal(s, env); } }
       else if (s.state === 'hidden') want = 0;
-      else if (s.state === 'pose') want = 0.13;
+      else if (s.state === 'pose') want = 0.1;
       else {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
-        want = s.state === 'flee' ? 0.6 : inWater ? 0.35 : 0.24 + 0.08 * Math.sin(t * 0.3 + k);
+        want = s.state === 'flee' ? (inWater ? 0.6 : 0.45) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
         if (s.state === 'flee') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
         if (s.state === 'crawl' && !inWater && Math.sin(t * 0.21 + k * 2.1) > 0.88) want *= 0.03; // short pauses
         if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
@@ -286,19 +296,21 @@ export function createSnakes(world, Q, scene) {
             const dx = ox - s.hd.x, dz = oz - s.hd.z, dd = Math.hypot(dx, dz);
             if (dd < orr + 0.6) { const fa = Math.atan2(dz, dx), rel = Math.atan2(Math.sin(fa - s.axTh), Math.cos(fa - s.axTh)); if (Math.abs(rel) < 1.4) dTh += (rel > 0 ? -1 : 1) * 1.6 * (1 - (dd - orr) / 0.6); }
           }
+          { const lx = s.ax.x + Math.cos(s.axTh) * 0.6, lz = s.ax.z + Math.sin(s.axTh) * 0.6;
+            if (Hg(lx, lz) < -1.6 || (s.bank ? Math.abs(lx - bankX) > 25 : islandE(lx, lz) > 1.45)) dTh += 1.2; }
           const maxTurn = s.spd / (s.wet > 0.5 ? 0.35 : 0.22) * dt; // turning radius limit: no sharp corners in the path
           s.axTh += Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
           // land: serpenoid path — the heading swings ±~70° sinusoidally with the distance crawled, giving round U-loops
           // with straight flanks (wave length along the body ~0.42 L); in the water the head goes almost straight
-          const thMax = 1.4 * s.amp * (1 - s.wet) * (s.state === 'flee' ? 0.85 : 1), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
-          s.wph0 += 2 * Math.PI * step / lam;
-          const hth = s.axTh + thMax * Math.sin(s.wph0);
+          const thMax = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
+          const wph = s.wph0 + 2 * Math.PI * step / lam;
+          const hth = s.axTh + thMax * Math.sin(wph);
           const nx = s.hd.x + Math.cos(hth) * step, nz = s.hd.z + Math.sin(hth) * step;
           const tooDeep = Hg(nx, nz) < -1.7, offHome = s.bank ? Math.abs(nx - bankX) > 26 : islandE(nx, nz) > 1.5;
           if (tooDeep || offHome) { s.axTh += s.spd / 0.3 * dt; s.goal = s.bank ? bankPt(false) : islandPt(0.2, 0.8); if (s.state === 'flee') s.state = 'crawl'; }
-          else { s.hd.x = nx; s.hd.z = nz; s.th = hth; }
+          else { s.hd.x = nx; s.hd.z = nz; s.th = hth; s.wph0 = wph; } // the wave phase only advances when the head really moves
           // axis follows the mean line of the head path
-          const J = 0.67 + 0.33 * (1 - s.amp * (1 - s.wet));
+          const J = 1 - thMax * thMax / 4 + Math.pow(thMax, 4) / 64; // mean forward fraction of a serpenoid
           s.ax.x += Math.cos(s.axTh) * step * J; s.ax.z += Math.sin(s.axTh) * step * J;
           const kk = Math.min(1, dt * 0.8); s.ax.x += (s.hd.x - s.ax.x) * kk; s.ax.z += (s.hd.z - s.ax.z) * kk;
           s.amp = Math.min(1, s.amp + step / (0.3 * s.L));
@@ -310,18 +322,16 @@ export function createSnakes(world, Q, scene) {
       }
       s.swimAmp += ((s.wet > 0.4 && s.spd > 0.03 ? 1 : 0.25) - s.swimAmp) * Math.min(1, dt * 1.5);
       // ---- body ----
-      const ds = s.L / (NODES - 1), wB = sm(0.15, 0.85, s.wet);
-      sampleTrail(s.hd.x, s.hd.z, s.trail, ds, Pl);
-      if (wB > 0.001) { swimBody(s, Pw); for (let i = 0; i < NODES; i++) Pn[i].copy(Pl[i]).lerp(Pw[i], wB); }
-      else for (let i = 0; i < NODES; i++) Pn[i].copy(Pl[i]);
+      const ds = s.L / (NODES - 1);
+      sampleTrail(s.hd.x, s.hd.z, s.trail, ds, Pn);
       // heights: on the visible ground, floating at the surface in water; head + neck raised
       const alert = s.state === 'bask' ? 0.3 + 0.5 * Math.max(0, Math.sin(t * 0.13 + k * 1.7)) : s.state === 'flee' ? 0.6 : 0.25;
-      s.lift += ((s.wet > 0.5 ? 0.5 : alert) - s.lift) * Math.min(1, dt * 2);
+      s.lift += ((s.wet > 0.5 ? 0.45 : alert) - s.lift) * Math.min(1, dt * 2);
       const sinkH = s.hidden * 0.12, fl = 1 - 0.25 * s.flat;
       for (let i = 0; i < NODES; i++) {
         const u = i / (NODES - 1), r = radius(s, u) * fl;
         const g = Hg(Pn[i].x, Pn[i].z);
-        let y = Math.max(g + r * 0.95 + 0.002, -r * 0.2);
+        let y = Math.max(g + r * 0.95 + 0.002, r * 0.75 + 0.002);
         const hl = Math.max(0, 1 - i / 7); y += hl * hl * (0.006 + 0.02 * s.lift);
         Pn[i].y = y - sinkH;
       }
@@ -357,31 +367,34 @@ export function createSnakes(world, Q, scene) {
       // head
       s.lookT -= dt; if (s.lookT <= 0) { s.look = s.state === 'bask' ? (R() - 0.5) * 1.0 : (R() - 0.5) * 0.25; s.lookT = 1.5 + R() * 3; }
       s.curLook += (s.look - s.curLook) * Math.min(1, dt * 2);
-      const yaw = Math.atan2(-Tn[0].z, Tn[0].x), pitch = Math.asin(Math.max(-1, Math.min(1, Tn[0].y)));
+      const nk = Math.round(4 + 6 * s.wet), dxn = Pn[0].x - Pn[nk].x, dzn = Pn[0].z - Pn[nk].z;
+      const yawT = Math.atan2(-Tn[0].z, Tn[0].x), yawN = Math.atan2(-dzn, dxn);
+      const yaw = yawT + Math.atan2(Math.sin(yawN - yawT), Math.cos(yawN - yawT)) * (0.3 + 0.5 * s.wet), pitch = Math.asin(Math.max(-1, Math.min(1, Tn[0].y)));
       s.head.rotation.order = 'YZX'; s.head.rotation.set(0, yaw + s.curLook, pitch + 0.06 * s.lift);
       s.head.position.copy(Pn[0]).addScaledVector(Tn[0], -0.004); s.head.position.y += 0.0005;
-      s.head.scale.setScalar(s.rMax / 0.0145);
+      s.head.scale.setScalar(1);
       s.nextTongue -= dt;
       if (s.nextTongue <= 0 && s.state !== 'hidden') { s.tongueT = 0.001; s.nextTongue = (s.state === 'bask' ? 2 : 1) + R() * 4; }
       if (s.tongueT > 0) { s.tongueT += dt; const f = s.tongueT < 0.5 ? Math.abs(Math.sin(s.tongueT / 0.5 * Math.PI * 2)) : 0; s.tongue.scale.x = Math.max(0.001, f); if (s.tongueT > 0.5) { s.tongueT = 0; s.tongue.scale.x = 0.001; } }
       const vis = s.hidden < 0.98; s.body.visible = vis; s.head.visible = vis;
-      // ---- water shader data: 10 body points (head -> tail) + 6 points of the axis trail behind the tail with their age ----
-      const base = k * 16, inW = vis && s.wet > 0.05;
+      // ---- water shader data: 10 body points (head -> tail) + 8 wave sources at loop apexes ----
+      const base = k * 24, inW = vis && s.wet > 0.05;
       if (inW) {
-        for (let q = 0; q < 10; q++) { const nd = Pn[Math.round(q / 9 * (NODES - 1))]; snkU[base + q].set(nd.x, nd.z, 0, nd.y); }
-        // trail behind the tail
-        const tail = Pn[NODES - 1]; let acc = 0, idx = 0, pv = tail, emitted = 0; const sp = Math.max(0.08, s.spd);
-        for (let q = 0; q < s.axTrail.length && emitted < 6; q++) {
-          const a = s.axTrail[q], d0 = Math.hypot(a.x - s.ax.x, a.z - s.ax.z);
-          if (d0 < s.L * 0.82) continue;
-          acc += Math.hypot(a.x - pv.x, a.z - pv.z); pv = a; idx++;
-          if (idx % 6 === 0 || emitted === 0) { snkU[base + 10 + emitted].set(a.x, a.z, Math.min(3, acc / sp + 0.05), 0); emitted++; }
-        }
-        for (; emitted < 6; emitted++) snkU[base + 10 + emitted].copy(snkU[base + 10 + Math.max(0, emitted - 1)]);
+        for (let q = 0; q < 16; q++) { const nd = Pn[Math.round(q / 15 * (NODES - 1))]; snkU[base + q].set(nd.x, nd.z, 0, nd.y); }
         let cx = 0, cz = 0; for (let q = 0; q < 16; q++) { cx += snkU[base + q].x; cz += snkU[base + q].y; } cx /= 16; cz /= 16;
         let rad = 0; for (let q = 0; q < 16; q++) rad = Math.max(rad, Math.hypot(snkU[base + q].x - cx, snkU[base + q].y - cz));
+        for (let q = 0; q < 8; q++) { const e = snkU[base + 16 + q], age = (t % 3600) - e.z; if (age >= 0 && age < 3.2) rad = Math.max(rad, Math.hypot(e.x - cx, e.y - cz) + 0.03 + 0.3 * age); }
         snkB[k].set(cx, cz, rad + 0.05, Math.min(1, s.spd / 0.3) * sm(0.3, 0.8, s.wet));
       } else snkB[k].set(0, 0, 0, 0);
+      // a loop apex is passed each time the wave phase crosses a multiple of pi
+      const apex = Math.floor(s.wph0 / Math.PI);
+      if (apex !== s.lastApex) {
+        if (s.lastApex !== undefined && inW && s.wet > 0.5 && s.spd > 0.05) {
+          const outA = s.axTh + (apex % 2 === 0 ? -Math.PI / 2 : Math.PI / 2);
+          snkU[base + 16 + s.emi].set(s.hd.x, s.hd.z, t % 3600, outA); s.emi = (s.emi + 1) % 8;
+        }
+        s.lastApex = apex;
+      }
     }
   }
   function dispose() { for (const s of snakes) { for (const o of [s.body, s.head]) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); } s.tongue.geometry.dispose(); } for (const b of snkB) b.set(0, 0, 0, 0); }
