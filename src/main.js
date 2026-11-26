@@ -7,12 +7,13 @@ import { U } from './shaders.js';
 import { noiseTextureData, waterNormalData } from './noise.js';
 import { buildWorld, disposeGroup, sm } from './world.js';
 import { createFauna } from './fauna.js';
-import { createAudio, testThunder, testCrackle } from './audio.js';
+import { createAudio, testThunder, testCrackle, testFrogs } from './audio.js';
 import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
+import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.22';
+const VERSION = '0.0.23';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -63,7 +64,7 @@ const wn = new THREE.DataTexture(waterNormalData(256), 256, 256, THREE.RGBAForma
 wn.wrapS = wn.wrapT = THREE.RepeatWrapping; wn.magFilter = THREE.LinearFilter; wn.minFilter = THREE.LinearMipmapLinearFilter; wn.generateMipmaps = true; wn.needsUpdate = true; U.tWaterN.value = wn;
 
 let tierKey = S.quality === 'auto' ? (coarse ? 'med' : 'high') : S.quality, Q = tier(tierKey);
-let world = null, fauna = null, ducks = null, camp = null, composer = null, bloom = null;
+let world = null, fauna = null, ducks = null, snakes = null, camp = null, composer = null, bloom = null;
 const audio = createAudio();
 
 function applyRenderQuality() {
@@ -92,9 +93,9 @@ function applyRenderQuality() {
 const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0 };
 let curve = null, flyU = 0;
 function build() {
-  if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); camp.dispose(); }
+  if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); snakes.dispose(); camp.dispose(); }
   world = buildWorld(S.seed, Q); world.bakeImpostors(renderer); scene.add(world.group);
-  fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene);
+  fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene); snakes = createSnakes(world, Q, scene);
   camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
   U.uCampA.value.set(camp.tentP.x, camp.tentP.z, camp.fireP.x, camp.fireP.z); U.uCampB.value.set(Math.cos(camp.yaw), Math.sin(camp.yaw), camp.halfW, camp.halfL);
   P.pos.set(world.spawn[0], world.H(world.spawn[0], world.spawn[1]) + P.eye, world.spawn[1]); P.pitch = 0.02; P.gy = P.pos.y; P.jy = 0; P.vy = 0;
@@ -467,6 +468,7 @@ function frame(now) {
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
   ducks.update(dt, gameTime, env);
+  snakes.update(dt, gameTime, Object.assign(env, { cover: W.cover, rain: W.rain }));
   camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
   U.uCampOn.value = S.camp ? 1 : 0;
   if (audio.on) {
@@ -476,7 +478,7 @@ function frame(now) {
     if (camp.state && S.camp) { const d = camera.position.distanceTo(camp.fireP); audio.fireSound(Math.max(camp.state.fire, camp.state.out ? 0.15 : 0) * clamp(1 - d / 22, 0, 1) ** 1.5, W.rain); } else audio.fireSound(0, 0);
     audio.update(dt, { volume: S.volume, wind: windS, gust: 0.5 + 0.5 * Math.sin(gameTime * 0.37) * Math.sin(gameTime * 0.11), water: nearW, rain: W.rain,
       birds: (sm(4.5, 6, env.h) * (1 - sm(8.5, 10, env.h)) * 0.9 + 0.3 * env.day + 0.15 * sm(18.5, 19.5, env.h) * (1 - sm(20.5, 21.5, env.h))) * (1 - sm(0.2, 0.6, W.rain)),
-      crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: 0.7 * sm(-2, -8, env.el) * (1 - W.rain * 0.4), owl: sm(-6, -12, env.el) * env.dry,
+      crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: (0.8 * sm(2, -6, env.el) + 0.15 * env.day * (1 - W.cover * 0.6) + 0.25 * U.uWet.value * (1 - W.rain)) * (1 - W.storm * 0.8) * (1 - sm(0.5, 1, W.rain) * 0.6), owl: sm(-6, -12, env.el) * env.dry,
       buzz: nd.p ? clamp(1 - nd.d / 2.8, 0, 1) : 0, buzzPan: pan });
   }
   autoQuality(dt);
@@ -503,6 +505,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, testThunder, testCrackle, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, get snakes() { return snakes; }, testThunder, testCrackle, testFrogs, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

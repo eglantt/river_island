@@ -903,7 +903,7 @@ export function buildWorld(seed, Q) {
     // beneath each bough; ragged outline (random lengths, gaps); spire with a leader; dead twigs on the bare lower trunk.
     // o: { lv: whorls, per: branches per whorl, bare: bare trunk fraction, slim: crown width, dense, crook: top bend, young }
     const spruce = (o) => {
-      const acc = new CardAcc(), tr = new Acc(), top = 11.2, deadC = C('#6a635a'), barkC = C('#4e4034'), stickC = C('#5a4232');
+      const acc = new CardAcc(), tr = new Acc(), top = 11.2, deadC = C('#66625d'), barkC = C('#3d3632'), stickC = C('#4a3e36');
       const lite = Q.sprucePer < 7; // low tier: fewer cards per bough
       // trunk axis with a slight sway and an optional crooked top
       const ca = R() * 6.28, axis = (y) => { const t = y / top; return new V3(Math.sin(y * 0.35 + ca) * 0.06 + Math.cos(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12, y, Math.cos(y * 0.31 + ca) * 0.06 + Math.sin(ca) * o.crook * Math.max(0, t - 0.78) ** 2 * 12); };
@@ -1238,7 +1238,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, flowerPts, reedPts, spawn, onIsland };
+  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {

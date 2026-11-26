@@ -106,6 +106,33 @@ export async function testCrackle() {
   return { oldRms: +o.toFixed(4), newRms: +n.toFixed(4), ratio: +(n / o).toFixed(2) };
 }
 
+export function frogCall(ac, out, fr, vol, t0) {
+  const R = Math.random, n = 5 + Math.floor(R() * 10), step = 1 / (fr.rate * (0.9 + R() * 0.2));
+    const pre = ac.createGain(); pre.gain.value = 1;
+  const f1 = ac.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = fr.form; f1.Q.value = 4.5;
+  const f2 = ac.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = fr.form * 0.48; f2.Q.value = 3;
+  const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 250;
+  const mix = ac.createGain(); mix.gain.value = 1;
+  pre.connect(f1); pre.connect(f2); f1.connect(mix); f2.connect(mix); mix.connect(hp); hp.connect(out);
+  for (let i = 0; i < n; i++) {
+    const t = t0 + i * step, u = i / Math.max(1, n - 1), dur = step * (0.55 + R() * 0.15);
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sawtooth';
+    const fp = fr.f0 * (1 + 0.12 * Math.sin(u * Math.PI)) * (0.97 + R() * 0.06); // pitch rises then falls over the series
+    o.frequency.setValueAtTime(fp * 1.08, t); o.frequency.linearRampToValueAtTime(fp * 0.92, t + dur);
+    const pk = vol * (0.55 + 0.45 * Math.sin(Math.min(1, u * 1.3) * Math.PI * 0.9 + 0.2));
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk, t + 0.008); g.gain.setValueAtTime(pk, t + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(pre); o.start(t); o.stop(t + dur + 0.02);
+  }
+}
+// renders a short marsh-frog chorus offline (for listening tests)
+export async function testFrogs(sec = 20) {
+  const sr = 44100, c = new OfflineAudioContext(2, sr * sec, sr), R = Math.random;
+  const frogs = Array.from({ length: 5 }, () => ({ pan: R() * 1.8 - 0.9, dist: 0.3 + R() * 0.7, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 }));
+  for (let t = 0.3; t < sec - 2; t += 0.8 + R() * 2.2) { const fr = frogs[Math.floor(R() * frogs.length)], p = c.createStereoPanner(); p.pan.value = fr.pan; p.connect(c.destination); frogCall(c, p, fr, 0.25 * fr.dist, t); }
+  const b = await c.startRendering(); return [Array.from(b.getChannelData(0)), Array.from(b.getChannelData(1))];
+}
+
 // Fully synthesized ambience: wind, leaves, river, rain, birds, crickets, frogs, owl, splash, thunder, dragonfly buzz
 export function createAudio() {
   let ac = null, master, noiseBuf, ch = {}, nextBird = 0, nextCricket = 0, nextFrog = 0, nextOwl = 0, buzz = null;
@@ -155,16 +182,11 @@ export function createAudio() {
       o.frequency.value = f; env(g, t, 0.005, vol, 0.03); o.connect(g); g.connect(out); o.start(t); o.stop(t + 0.06);
     }
   }
-  function frog(vol) {
-    const t0 = ac.currentTime, out = panner(R() * 1.6 - 0.8), n = 1 + Math.floor(R() * 3);
-    for (let i = 0; i < n; i++) {
-      const t = t0 + i * 0.35, o = ac.createOscillator(), am = ac.createOscillator(), ag = ac.createGain(), g = ac.createGain(), f = ac.createBiquadFilter();
-      o.type = 'sawtooth'; o.frequency.setValueAtTime(110 + R() * 40, t); o.frequency.linearRampToValueAtTime(80, t + 0.2);
-      am.frequency.value = 32; ag.gain.value = 0.5; am.connect(ag); ag.connect(g.gain);
-      f.type = 'bandpass'; f.frequency.value = 700; f.Q.value = 3;
-      env(g, t, 0.02, vol, 0.22); o.connect(f); f.connect(g); g.connect(out); o.start(t); am.start(t); o.stop(t + 0.3); am.stop(t + 0.3);
-    }
-  }
+  // marsh frog (Pelophylax ridibundus): "laughing" series of 5-14 croaks, each a buzzy glottal pulse train
+  // shaped by two formants; every frog has its own pitch, tempo, place (pan) and distance
+  const frogs = Array.from({ length: 6 }, () => ({ pan: R() * 1.8 - 0.9, dist: 0.3 + R() * 0.7, f0: 120 + R() * 70, rate: 6.5 + R() * 4, form: 1100 + R() * 600 }));
+  let chorusUntil = 0, quietUntil = 0;
+  function frog(fr, vol) { const out = panner(fr.pan); frogCall(ac, out, fr, vol, ac.currentTime + 0.02); }
   function owl(vol) {
     const t0 = ac.currentTime, out = panner(R() * 1.2 - 0.6);
     [[0, 0.35], [0.55, 0.18], [0.8, 0.6]].forEach(([dt, len]) => {
@@ -195,7 +217,20 @@ export function createAudio() {
     const now = ac.currentTime;
     if (now > nextBird) { if (s.birds > 0.05 && R() < s.birds) chirp(0.05 + 0.05 * s.birds); nextBird = now + (0.6 + R() * 4) / (0.3 + s.birds); }
     if (now > nextCricket) { if (s.crickets > 0.05) cricket(0.012 * s.crickets); nextCricket = now + 0.8 + R() * 1.5 / (0.2 + s.crickets); }
-    if (now > nextFrog) { if (s.frogs > 0.05 && R() < s.frogs) frog(0.06); nextFrog = now + 2 + R() * 6; }
+    if (now > nextFrog) {
+      // chorus: one frog starts, others answer; long silences between bouts
+      if (s.frogs > 0.05 && now > quietUntil) {
+        const loud = s.frogs * (0.35 + 0.65 * s.water);
+        if (now > chorusUntil && R() < 0.35) chorusUntil = now + 6 + R() * 18 * s.frogs;
+        const inChorus = now < chorusUntil;
+        if (inChorus || R() < s.frogs * 0.5) {
+          const fr = frogs[Math.floor(R() * frogs.length)]; frog(fr, 0.07 * loud * fr.dist);
+          if (inChorus && R() < 0.6) { const f2 = frogs[Math.floor(R() * frogs.length)]; setTimeout(() => { if (ac) frog(f2, 0.07 * loud * f2.dist); }, 250 + R() * 900); }
+        }
+        if (!inChorus && R() < 0.15) quietUntil = now + 8 + R() * 20;
+        nextFrog = now + (inChorus ? 0.8 + R() * 1.6 : 2.5 + R() * 6);
+      } else nextFrog = now + 1;
+    }
     if (now > nextOwl) { if (s.owl > 0.3 && R() < 0.5) owl(0.05); nextOwl = now + 12 + R() * 25; }
     set(buzz.g, s.buzz * 0.05); if (buzz.pan.pan) buzz.pan.pan.setTargetAtTime(s.buzzPan, now, 0.1);
   }
