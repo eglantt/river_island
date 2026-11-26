@@ -59,7 +59,7 @@ export function createSnakes(world, Q, scene) {
     const HL = 0.038, g = new THREE.SphereGeometry(1, 28, 18), P = g.attributes.position, v = new V(), cols = [];
     const wAt = (u) => 0.0105 * Math.pow(Math.max(0, 1 - Math.pow((u - 0.32) / (u > 0.32 ? 0.7 : 0.5), 2)), 0.6) + 0.0012;
     const hAt = (u) => 0.0068 * Math.pow(Math.max(0, 1 - Math.pow((u - 0.3) / (u > 0.3 ? 0.75 : 0.5), 2)), 0.45) + 0.0012;
-    const dark = base.clone().multiplyScalar(0.85), plate = base.clone().multiplyScalar(1.15), lab = new THREE.Color(0.9, 0.88, 0.78), blk = new THREE.Color(0.03, 0.03, 0.03);
+    const dark = base.clone().multiplyScalar(0.8), plate = base.clone().multiplyScalar(0.9), lab = new THREE.Color(0.86, 0.84, 0.74), blk = base.clone().multiplyScalar(0.45);
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i);
       const u = (v.x + 1) / 2, w = wAt(u), h = hAt(u);
@@ -72,7 +72,7 @@ export function createSnakes(world, Q, scene) {
       const side = Math.abs(v.z), top = v.y;
       if (top > 0.55) { // crown plates: midline seam and transverse seams
         const seam = (Math.abs(v.z) < 0.06 && u > 0.25 && u < 0.62) || Math.abs(u - 0.62) < 0.02 || Math.abs(u - 0.8) < 0.015 || Math.abs(u - 0.25) < 0.02;
-        c = seam ? blk : plate;
+        c = seam ? blk : plate.clone().multiplyScalar(0.92 + 0.16 * Math.sin(u * 37 + v.z * 23));
       } else if (top < -0.05 && top > -0.6 && u > 0.12 && side > 0.25) c = Math.abs(Math.sin(u * 30)) < 0.2 ? blk : lab;
       else if (top <= -0.6) c = lab;
       cols.push(c.r, c.g, c.b);
@@ -87,7 +87,7 @@ export function createSnakes(world, Q, scene) {
       const ring = new THREE.TorusGeometry(0.0029, 0.00045, 5, 16).rotateX(Math.PI / 2).rotateX(sd * 0.35).translate(eu * HL, ey, sd * (ew - 0.0019));
       const nr = ring.attributes.position.count; ring.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nr }, () => [0.62, 0.5, 0.25]).flat(), 3)); parts.push(ring);
       const brow = new THREE.SphereGeometry(0.003, 8, 6).scale(1.4, 0.4, 0.8).translate(eu * HL - 0.0005, ey + 0.0032, sd * (ew - 0.0026));
-      const nb = brow.attributes.position.count; brow.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nb }, () => [plate.r, plate.g, plate.b]).flat(), 3)); parts.push(brow);
+      const nb = brow.attributes.position.count; brow.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: nb }, () => [dark.r, dark.g, dark.b]).flat(), 3)); parts.push(brow);
     }
     return merge(parts);
   }
@@ -142,7 +142,8 @@ export function createSnakes(world, Q, scene) {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('aS', new THREE.BufferAttribute(aS, 2));
     g.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(nV), 1)); g.setIndex(idx);
     const body = new THREE.Mesh(g, mat); body.frustumCulled = false; body.castShadow = true; body.receiveShadow = true; scene.add(body);
-    const hm = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'snakeH', 0);
+    const hm = patch(new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 38, specular: new THREE.Color(0.16, 0.16, 0.15) }), 'snakeH', 0);
+    { const ob = hm.onBeforeCompile; hm.customProgramCacheKey = () => 'snakeH'; hm.onBeforeCompile = (sh) => { ob(sh); sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.04, 0.09, 0.085), clamp(-vWp.y * 3.0 + max(-vWp.y, 0.0) * 8.0, 0.0, 0.85));'); }; }
     const head = new THREE.Mesh(headGeo(look.base), hm); head.castShadow = true; scene.add(head);
     const tg = tongueGeo(); tg.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(tg.attributes.position.count), 1));
     const tongue = new THREE.Mesh(tg, patch(new THREE.MeshLambertMaterial({ color: 0x141012, side: THREE.DoubleSide }), 'tongue', 0)); head.add(tongue);
@@ -150,17 +151,24 @@ export function createSnakes(world, Q, scene) {
     // initial trail: a gentle S on land
     const start = bank ? bankPt(false) : islandPt(0.2, 0.7), trail = [];
     const a0 = R() * 6.28;
-    for (let i = 1; i <= 200; i++) { const s = i / 200 * (L + 0.1); trail.push(new V(start.x - Math.cos(a0) * s, 0, start.z - Math.sin(a0) * s)); }
+    { // lay the body out as if it had crawled here: serpenoid from tail to head, stored head-first
+      const lam = 0.42 * L, n = 220, ds0 = (L + 0.1) / n, pts = []; let x = 0, z = 0;
+      for (let i = 0; i <= n; i++) { const ph = 2 * Math.PI * i * ds0 / lam, th = a0 + 1.4 * 0.85 * Math.sin(ph); pts.push([x, z]); x += Math.cos(th) * ds0; z += Math.sin(th) * ds0; }
+      const [hx, hz] = pts[n];
+      for (let i = n - 1; i >= 0; i--) trail.push(new V(start.x + pts[i][0] - hx, 0, start.z + pts[i][1] - hz));
+      trail.wph0 = 2 * Math.PI * (L + 0.1) / lam;
+    }
     snakes.push({
-      bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: 0, wph: 0, amp: 0, swimAmp: 0.25,
+      bank, L, body, head, tongue, trail, axTrail: trail.filter((_, i) => i % 2 === 0).map((p) => p.clone()), hd: new V().copy(start), ax: new V().copy(start), th: a0, axTh: a0, wph0: trail.wph0, wph: 0, amp: 0.85, swimAmp: 0.25,
       spd: 0, state: 'crawl', goal: null, stateT: 0, tongueT: 0, nextTongue: 1 + R() * 3, lift: 0, flat: 0, hidden: 0, wet: 0, look: 0, curLook: 0, lookT: 0, splashed: false,
-      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), dep: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined, hdY: 0, dv: null, diveCD: 20 + R() * 30,
+      rMax: 0.0118 + R() * 0.0012, lifts: new Float32Array(NODES), dep: new Float32Array(NODES), pose: null, poseI: 0, emi: 0, lastApex: undefined, hdY: 0, dv: null, diveCD: 60 + R() * 120, sinceDive: 61, fleeDive: false,
     });
   }
 
   // ---------- behaviour ----------
   const Hg = world.Hmesh || H; // height of the visible terrain mesh (triangles), not the analytic field
   const pickGoal = (s, env) => {
+    s.goalT = 0;
     const sunny = env.sunInt * (1 - (env.cover || 0)) > 0.35 && env.day > 0.5;
     const r = R();
     if (sunny && r < 0.35) { s.state = 'toBask'; s.goal = s.bank ? bankPt(false) : islandPt(0.55, 0.95); return; }
@@ -249,7 +257,7 @@ export function createSnakes(world, Q, scene) {
       // flee from the player
       const dp = cam ? Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) : 99;
       if (!s.noFlee && dp < 3.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
-        s.state = 'flee'; s.stateT = 4 + R() * 3; s.pose = null;
+        s.state = 'flee'; s.stateT = 4 + R() * 3; s.pose = null; s.fleeDive = R() < 0.35;
         const away = new V(s.hd.x - cam.x, 0, s.hd.z - cam.z).normalize();
         const w = s.bank ? bankPt(true) : islandWater();
         s.goal = new V(w.x - s.hd.x, 0, w.z - s.hd.z).normalize().dot(away) > 0 ? w : s.hd.clone().addScaledVector(away, 4);
@@ -271,16 +279,19 @@ export function createSnakes(world, Q, scene) {
         if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
         else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
+        // a goal that cannot be reached (rocks, deep water) is dropped after a while
+        if (s.state === 'crawl' || s.state === 'toBask') { s.goalT = (s.goalT || 0) + dt; if (s.goalT > 35) { s.goalT = 0; pickGoal(s, env); } } else s.goalT = 0;
       }
       // ---- diving: down at ~30°, swim or lie on the bottom, come back up ----
       const depthHere = -Hg(s.hd.x, s.hd.z);
-      s.diveCD -= dt;
+      s.diveCD -= dt; s.sinceDive += dt;
       if (!s.dv && inWater && s.wet > 0.8 && !wantHide && depthHere > 0.45 && (s.state === 'crawl' || s.state === 'flee')) {
-        if ((s.state === 'flee' && R() < 0.6 * dt * 3) || s.diveCD <= 0) {
+        if (s.sinceDive > 60 && ((s.state === 'flee' && s.fleeDive) || s.diveCD <= 0)) {
+          s.fleeDive = false;
           const maxD = Math.min(0.5, depthHere - 0.05);
           const bottom = depthHere < 0.75 && R() < 0.55;
           s.dv = { ph: 'down', target: bottom ? -(depthHere - 0.04) : -maxD, t: 0, bottom };
-          env.ripple(s.hd.x, s.hd.z, 0.12); s.diveCD = 30 + R() * 30;
+          env.ripple(s.hd.x, s.hd.z, 0.12); s.diveCD = 120 + R() * 120; s.sinceDive = 0;
         } else if (s.diveCD <= 0) s.diveCD = 5;
       }
       if (s.dv) {
@@ -309,7 +320,7 @@ export function createSnakes(world, Q, scene) {
           }
           const tr = s.trail[0]; if (tr) s.th = Math.atan2(s.hd.z - tr.z, s.hd.x - tr.x);
           if (s.poseI >= s.pose.length) { s.state = 'bask'; s.stateT = 35 + R() * 60; s.spd = 0; }
-          s.ax.set(s.hd.x, 0, s.hd.z); s.axTh = s.th; s.amp = 0;
+          s.ax.set(s.hd.x, 0, s.hd.z); s.axTh = s.th; s.amp = 0.7;
         } else {
           // steer the axis toward the goal, around trunks and rocks
           let dTh = 0;
@@ -335,7 +346,7 @@ export function createSnakes(world, Q, scene) {
           const J = 1 - thMax * thMax / 4 + Math.pow(thMax, 4) / 64; // mean forward fraction of a serpenoid
           s.ax.x += Math.cos(s.axTh) * step * J; s.ax.z += Math.sin(s.axTh) * step * J;
           const kk = Math.min(1, dt * 0.8); s.ax.x += (s.hd.x - s.ax.x) * kk; s.ax.z += (s.hd.z - s.ax.z) * kk;
-          s.amp = Math.min(1, s.amp + step / (0.3 * s.L));
+          s.amp = Math.min(1, Math.max(0.65, s.amp) + step / (0.3 * s.L));
         }
         pushTrail(s.trail, s.hd.x, s.hd.z, 0.006, 500, s.hdY);
         pushTrail(s.axTrail, s.ax.x, s.ax.z, 0.01, 260);

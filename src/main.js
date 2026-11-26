@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.26';
+const VERSION = '0.0.27';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));

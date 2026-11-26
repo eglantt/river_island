@@ -331,8 +331,6 @@ export function waterMaterial() {
             if (d < dB) { dB = d; dirB = dv / max(d, 1e-4); }
           }
           float rr = 0.0125, xb = dB - rr;
-          float rimx = (dB - rr * 1.15) / 0.0035;
-          snkRim = max(snkRim, exp(-rimx * rimx) * 0.5);
           // 1-2 thin lines hugging the body
           // half-circles from loop apexes
           for (int q = 0; q < 8; q++) {
