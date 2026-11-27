@@ -306,9 +306,9 @@ export function waterMaterial() {
         vec2 flow = normalize(vec2(1.0, (mzf(vWp.x + 2.0) - mzf(vWp.x - 2.0)) * 0.25));
         float sp = 0.035 + uWind*0.03;
         vec2 q = mat2(flow.x, -flow.y, flow.y, flow.x) * vWp.xz; // river frame: x along the current
-        vec3 n1 = texture2D(tWaterN, q*0.045 + vec2(uTime*sp, 0.0)).xyz*2.0 - 1.0;
+        vec3 n1 = texture2D(tWaterN, q*0.045 - vec2(uTime*sp, 0.0)).xyz*2.0 - 1.0; // pattern moves downstream (+x)
         vec3 n2 = texture2D(tWaterN, vWp.xz*0.11 + vec2(0.3,-0.6)*uTime*sp*1.3 + uWindDir*uTime*0.01).xyz*2.0 - 1.0;
-        vec3 n3 = texture2D(tWaterN, q*0.013 + vec2(uTime*0.012, 0.0)).xyz*2.0 - 1.0;
+        vec3 n3 = texture2D(tWaterN, q*0.013 - vec2(uTime*0.012, 0.0)).xyz*2.0 - 1.0;
         // calm wake behind the island and its tail bar: the current's streaks fade, the water is smoother
         vec2 lp = vWp.xz - uLee.xy; float la = dot(lp, uLee.zw), lb = -lp.x * uLee.w + lp.y * uLee.z;
         float lee = smoothstep(uLeeS.x * 0.05, uLeeS.x * 0.3, la) * (1.0 - smoothstep(uLeeS.x + 10.0, uLeeS.x + 38.0, la))
@@ -437,7 +437,7 @@ export function waterMaterial() {
         col += uSunCol * sg * uSunVis * uSunOcc * (1.0 - uDark*0.9) * (1.0 - cloudCov(cloudDensity(vWp.xz*0.00035 + uSunDir.xz*0.35))*0.8);
         col += vec3(0.75, 0.8, 1.0) * pow(max(dot(R, uMoonDir), 0.0), 220.0) * 3.0 * uMoonVis * uMoonOcc * (1.0 - uDark);
         // shoreline foam
-        float fn = texture2D(tNoise, vWp.xz*0.35 + vec2(uTime*0.05, 0.0)).a;
+        float fn = texture2D(tNoise, vWp.xz*0.35 - vec2(uTime*0.05, 0.0)).a; // drifts downstream (+x)
         float foam = (1.0 - smoothstep(0.0, 0.07, depth + (fn - 0.5)*0.06 + 0.03*sin(uTime*0.9 + fn*5.0))) * (0.5 + 0.5*fn);
         col = mix(col, (uAmb + uSunCol*uSunVis)*vec3(0.55, 0.55, 0.5), clamp(foam, 0.0, 1.0)*0.22);
         col += vec3(0.75, 0.8, 1.0) * uFlash * 0.5;
