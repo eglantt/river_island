@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 // Shared uniforms updated once per frame
 export const U = {
-  uTime: { value: 0 }, uWind: { value: 0.3 }, uWindDir: { value: new THREE.Vector2(0.85, 0.53) },
+  uTime: { value: 0 }, uWind: { value: 0.3 }, uWindL: { value: 0.09 }, uWindDir: { value: new THREE.Vector2(0.85, 0.53) },
   tNoise: { value: null }, tHzn: { value: null }, tWaterN: { value: null }, tDepth: { value: null },
   uCloudOff: { value: new THREE.Vector2() }, uCover: { value: 0.1 }, uDark: { value: 0 },
   uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uMoonDir: { value: new THREE.Vector3(0, -1, 0) },
@@ -61,11 +61,63 @@ vec4 mvPosition = vec4(transformed, 1.0);
   #endif
 #endif
 vec4 wpp = modelMatrix * mvPosition;
-float gst = texture2D(tNoise, wpp.xz*0.013 - uWindDir*uTime*0.075).b;
-vGust = gst;
-float sw = sway * uAmp;
-vec2 wv = uWindDir * (uWind*(0.25 + 1.5*gst*gst)) + vec2(sin(uTime*1.9 + wpp.x*0.8 + wpp.z*0.35), cos(uTime*1.45 + wpp.z*0.7)) * 0.1 * (0.25 + uWind);
-wpp.xz += wv * sw; wpp.y -= dot(wv,wv) * sw * 0.3;
+// ---- wind: gust fronts sweep downwind (5-8 m/s, bands 20-60 m) with lulls between; load ~ speed^2 ----
+float gRaw = texture2D(tNoise, wpp.xz*0.013 - uWindDir*uTime*(0.05 + 0.04*uWind)).b;
+float gst = smoothstep(0.3, 0.85, gRaw);
+vGust = gst; vFl = 0.0;
+#ifdef LEAFI
+float sw = iSway * uAmp, WL = uWindL; // the tree's sway where the leaf sits
+#else
+float sw = sway * uAmp, WL = uWindL;
+#endif
+#if defined(TREE)
+{
+  // the whole tree: mean bend with the gusts plus swaying at its own frequency (per-tree phase from slow noise),
+  // the branches in their own rhythm, the leaves fluttering fast
+  float ph = texture2D(tNoise, wpp.xz*0.031 + 0.17).r * 6.283, f0 = 0.3 + 0.16*texture2D(tNoise, wpp.xz*0.027 + 0.5).g;
+  float osc = sin(uTime*6.283*f0 + ph), osc2 = sin(uTime*6.283*f0*0.71 + ph*1.7);
+  float bend = WL*(0.7 + 1.6*gst) + 0.03*uWind;
+  vec2 side = vec2(-uWindDir.y, uWindDir.x);
+  vec2 d = uWindDir*bend*(1.0 + 0.35*osc) + side*bend*0.22*osc2;
+  float bp = dot(wpp.xyz, vec3(0.9, 0.6, 0.7));
+  d += vec2(sin(uTime*6.283*1.1 + bp), cos(uTime*6.283*0.85 + bp*1.3)) * (0.012 + 0.03*uWind + 0.35*WL*(0.5 + gst));
+  wpp.xz += d * sw * 6.0; wpp.y -= dot(d, d) * sw * sw * 1.8; // (the top stays on its arc)
+  #if defined(FLUT)
+  { // leaf flutter: fast, small, everywhere in the crown (not only at the top), brightening the turned-over leaves
+    float lp = dot(wpp.xyz, vec3(7.1, 5.3, 6.7));
+    float fl = sin(uTime*6.283*(3.0 + 2.5*uWind) + lp), fa = 0.004*uWind + 0.035*WL*(0.4 + gst);
+    #ifdef LEAFI
+    fa *= sway * 2.0; // a leaf turns on its stalk: the tip moves, the stalk stays
+    #endif
+    wpp.y += fl*fa; wpp.xz += uWindDir*abs(fl)*fa*0.6;
+    vFl = max(0.0, fl) * clamp(WL*(0.5 + gst)*1.6, 0.0, 1.0);
+  }
+  #endif
+}
+#elif defined(GUST)
+{
+  // grass, reeds, flowers: lie over in the gusts (taller blades bend further), flutter at the tips
+  float hI = 1.0;
+  #ifdef USE_INSTANCING
+  hI = clamp(length(instanceMatrix[1].xyz), 0.15, 3.0);
+  #endif
+  vec2 d = uWindDir*(0.08*uWind + WL*(0.4 + 1.0*gst)) + vec2(sin(uTime*(2.6 + 3.0*uWind) + wpp.x*1.7 + wpp.z*0.9), cos(uTime*(2.1 + 2.5*uWind) + wpp.z*1.3)) * (0.03 + 0.05*uWind + 0.12*WL);
+  d *= min(1.0, hI);
+  wpp.xz += d * sw; wpp.y -= dot(d * sw, d * sw) / (2.0 * max(0.25, hI));
+}
+#elif defined(TENT)
+{
+  // canvas: flaps and billows in the gusts; pinned seams (sway 0) never move, so nothing opens up
+  float fl = sin(uTime*(5.0 + 6.0*uWind) + wpp.x*2.1 + wpp.z*1.7) * 0.6 + sin(uTime*(8.0 + 5.0*uWind) + wpp.z*3.1) * 0.4;
+  vec2 d = uWindDir*(WL*(0.25 + 0.6*gst)) + vec2(fl, -fl) * (0.01 + 0.1*WL*(0.4 + gst));
+  wpp.xz += d * sw; wpp.y += fl * sw * (0.005 + 0.05*WL);
+}
+#else
+{
+  vec2 wv = uWindDir * (uWind*(0.25 + 1.5*gst*gst)) + vec2(sin(uTime*1.9 + wpp.x*0.8 + wpp.z*0.35), cos(uTime*1.45 + wpp.z*0.7)) * 0.1 * (0.25 + uWind);
+  wpp.xz += wv * sw; wpp.y -= dot(wv,wv) * sw * 0.3;
+}
+#endif
 vWp = wpp.xyz; vWN = normal;
 #ifdef CLIFF
 vCl = aCl;
@@ -74,16 +126,22 @@ mvPosition = viewMatrix * wpp;
 gl_Position = projectionMatrix * mvPosition;
 `;
 
+const TREE_KEYS = ['bark', 'barkT', 'leaf', 'leafI', 'foliage', 'bushfol', 'bankbush', 'forestfol', 'forest'];
+const FLUT_KEYS = ['leaf', 'leafI', 'foliage', 'bushfol', 'bankbush', 'forestfol'];
 export function patch(mat, key, amp = 0, defs = {}) {
-  mat.defines = Object.assign({}, mat.defines || {}, defs);
+  const auto = {};
+  if (TREE_KEYS.includes(key) || /^imp/.test(key)) auto.TREE = '';
+  if (FLUT_KEYS.includes(key)) auto.FLUT = '';
+  if (key === 'tent') auto.TENT = '';
+  mat.defines = Object.assign({}, mat.defines || {}, auto, defs);
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar', 'uHaze', 'uMtnK']) sh.uniforms[k] = U[k];
+    for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindL', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar', 'uHaze', 'uMtnK']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
     if (defs.SAFE !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  { vec4 c_ = gl_FragColor; if (!(abs(c_.r) < 1e4 && abs(c_.g) < 1e4 && abs(c_.b) < 1e4 && abs(c_.a) < 1e4)) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); }');
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    sh.vertexShader = `attribute float sway;\n#ifdef CLIFF\nattribute vec2 aCl;\nvarying vec2 vCl;\n#endif\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
+    sh.vertexShader = `attribute float sway;\n#ifdef LEAFI\nattribute float iSway;\n#endif\n#ifdef CLIFF\nattribute vec2 aCl;\nvarying vec2 vCl;\n#endif\nuniform float uTime, uWind, uWindL, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust, vFl;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
-    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze, uMtnK;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n#ifdef CLIFF\nvarying vec2 vCl;\n#endif\n` + CLOUD + SKYFN +
+    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze, uMtnK;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust, vFl;\nuniform float uWindL;\n#ifdef CLIFF\nvarying vec2 vCl;\n#endif\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <alphatest_fragment>', `#ifdef CARD
         { vec3 fn = normalize(cross(dFdx(vWp), dFdy(vWp))); vec3 vd = normalize(cameraPosition - vWp); diffuseColor.a *= smoothstep(0.06, 0.32, abs(dot(fn, vd))); }
       #endif
@@ -187,6 +245,9 @@ export function patch(mat, key, amp = 0, defs = {}) {
           outgoingLight *= 0.72 + 0.56*ln;
           outgoingLight *= 1.0 - uWet*0.15;
         #endif
+        #ifdef FLUT
+          outgoingLight *= 1.0 + 0.3 * vFl;
+        #endif
         #ifdef FOLI
           {
             vec3 vdir = normalize(vWp - cameraPosition);
@@ -199,7 +260,7 @@ export function patch(mat, key, amp = 0, defs = {}) {
           outgoingLight = max(outgoingLight, diffuseColor.rgb * (uAmb * 1.15 + uSunCol * uSunVis * uSunOcc * 0.3)); // underside never goes black
         #endif
         #ifdef GUST
-          outgoingLight *= 0.86 + 0.32*vGust;
+          outgoingLight *= mix(0.86 + 0.32*vGust, 0.78 + 0.5*vGust, clamp(uWindL*1.2, 0.0, 1.0)); // gust waves show on the grass
           outgoingLight *= 1.0 - uWet*0.18;
         #endif
       }

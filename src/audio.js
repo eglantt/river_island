@@ -252,7 +252,7 @@ export function createAudio() {
     const g = ac.createGain(); env(g, t, 0.01, vol, dur); s.connect(fl); fl.connect(g); g.connect(out || master); s.start(t, R() * 2); s.stop(t + dur + 0.1);
   }
   function splash(vol) { if (!ac) return; const t = ac.currentTime; noiseBurst(t, 0.35, 'bandpass', 1800, 1.2, vol * 0.5, null, 700); noiseBurst(t + 0.05, 0.25, 'highpass', 3500, 0.7, vol * 0.25); }
-  let duckFrom = 0, duckTo = 0;
+  let duckFrom = 0, duckTo = 0, nextFlap = 0;
   function thunder(delay, near) { if (!ac) return; const t = ac.currentTime + delay; thunderGraph(ac, master, noiseBuf, t, near); duckFrom = t; duckTo = t + 4.5; }
   const set = (g, v) => g.gain.setTargetAtTime(v, ac.currentTime, 0.4);
   function update(dt, s) {
@@ -260,7 +260,16 @@ export function createAudio() {
     master.gain.setTargetAtTime(s.volume, ac.currentTime, 0.2);
     const duck = ac.currentTime > duckFrom && ac.currentTime < duckTo ? 0.15 : 1;
     set(ch.wind.g, (0.035 + s.wind * 0.25 * (0.5 + s.gust)) * (0.4 + 0.6 * duck)); ch.wind.f.frequency.setTargetAtTime(260 + s.gust * 380 + s.wind * 200, ac.currentTime, 0.5);
-    set(ch.leaves.g, s.wind * 0.12 * (0.3 + s.gust));
+    // leaves: a hiss that grows with the wind load and the gusts, much louder under the crowns
+    set(ch.leaves.g, (s.wind * 0.05 + s.wind * s.wind * 0.22) * (0.25 + 0.75 * (s.trees || 0)) * (0.35 + 0.9 * s.gust));
+    ch.leaves.f.frequency.setTargetAtTime(5500 + 2500 * s.gust, ac.currentTime, 0.3);
+    // tent canvas flapping near the camp in strong wind: dull slaps in bursts with the gusts
+    if (s.tent > 0.02 && ac.currentTime > nextFlap) {
+      const v = s.tent * (0.4 + 0.8 * s.gust), t0 = ac.currentTime;
+      noiseBurst(t0, 0.07 + R() * 0.06, 'lowpass', 380 + R() * 260, 0.9, 0.22 * v);
+      noiseBurst(t0 + 0.01, 0.04, 'bandpass', 1500 + R() * 800, 1.2, 0.06 * v);
+      nextFlap = t0 + (s.gust > 0.5 ? 0.12 + R() * 0.35 : 0.4 + R() * 1.4);
+    }
     set(ch.river.g, 0.10 + 0.22 * s.water); set(ch.babble.g, 0.05 * s.water);
     ch.babble.f.frequency.setTargetAtTime(1100 + Math.sin(performance.now() * 0.0013) * 300 + Math.sin(performance.now() * 0.0047) * 200, ac.currentTime, 0.1);
     set(ch.rain.g, s.rain * 0.28 * duck); set(ch.rainLow.g, s.rain * 0.17 * duck);

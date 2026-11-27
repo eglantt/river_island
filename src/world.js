@@ -540,7 +540,9 @@ export function buildWorld(seed, Q) {
     trunks.push([x, z, S.rBase + 0.25, kind, height]);
     const bt = kind === 'birch' ? 'birch' : 'rough';
     const tintB = kind === 'willow' ? C('#d2c6b0') : kind === 'oak' ? C('#cdbca4') : kind === 'dead' ? deadTint : C('#ffffff');
-    const swayT = (v) => Math.max(0, (v.y - g0) / height) ** 2 * (kind === 'dead' ? 0.1 : 0.3);
+    // flexibility: birch and willow bend most, oak least, dead trees hardly at all
+    const flex = kind === 'dead' ? 0.12 : kind === 'birch' || kind === 'willow' ? 0.39 : kind === 'oak' ? 0.21 : 0.3;
+    const swayT = (v) => Math.max(0, (v.y - g0) / height) ** 2 * flex;
     const twigBirch = C('#7a6252');
     const colorFn = (nd) => (v, n) => {
       tmp.copy(tintB).multiplyScalar(0.8 + 0.25 * sm(g0, g0 + 1.5, v.y));
@@ -580,7 +582,7 @@ export function buildWorld(seed, Q) {
       const ao = (0.55 + 0.45 * Math.pow(d, 1.3)) * (0.85 + 0.15 * up);
       const c = LCOL[Math.floor(R() * LCOL.length)].clone().multiplyScalar(ao * (0.88 + R() * 0.24) * 1.02);
       if (R() < 0.04 && kind !== 'willow') c.lerp(C('#b8a640'), 0.6);
-      leafInst[kind].push([_m4.clone(), c]);
+      leafInst[kind].push([_m4.clone(), c, swayT(pos)]);
     };
     const total = Q.leaves * leafK * (kind === 'birch' ? 1.7 : kind === 'willow' ? 4.2 : 2.3);
     // weight outer nodes higher (the inside of a crown is shaded and bare)
@@ -807,7 +809,10 @@ export function buildWorld(seed, Q) {
     const leafMatI = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'leafI', 0.32, { FOLI: '', LEAFI: '' });
     for (const kd of ['oak', 'birch', 'willow']) {
       const L = leafInst[kd]; if (!L.length) continue;
-      const im = new THREE.InstancedMesh(LG[kd], leafMatI, L.length);
+      // each leaf carries its tree's sway at that point (so it moves with its branch); its own shape only flutters
+      const lg = LG[kd].clone(), isw = new Float32Array(L.length); L.forEach((e, i) => { isw[i] = e[2]; });
+      lg.setAttribute('iSway', new THREE.InstancedBufferAttribute(isw, 1));
+      const im = new THREE.InstancedMesh(lg, leafMatI, L.length);
       L.forEach(([mm, c], i) => { im.setMatrixAt(i, mm); im.setColorAt(i, c); });
       im.userData.leaf = true; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; im.castShadow = true; im.receiveShadow = true; group.add(im);
     }
@@ -982,7 +987,7 @@ export function buildWorld(seed, Q) {
   const addAcc = (acc, mat, cast = true) => { if (!acc.p.length) return; const m = new THREE.Mesh(acc.build(), mat); m.castShadow = cast; m.receiveShadow = true; group.add(m); };
   addAcc(trunkAcc, barkMat); addAcc(leafAcc, leafMat); addAcc(bushAcc, leafMat); addAcc(rockAcc, barkMat);
   if (sodGeo) { const m = new THREE.Mesh(sodGeo, barkMat); m.castShadow = true; m.receiveShadow = true; group.add(m); }
-  const folMat = FM.mk('foliage', 0.32), bushMat = FM.mk('bushfol', 0.32);
+  const folMat = FM.mk('foliage', 0.32), bushMat = FM.mk('bushfol', 0.12);
   for (const [acc, mat] of [[cardAcc, folMat], [bushCards, bushMat]]) {
     if (!acc.p.length) continue;
     const m = new THREE.Mesh(acc.build(), mat); m.castShadow = true; m.receiveShadow = true; m.customDepthMaterial = FM.depth; group.add(m);
@@ -1222,7 +1227,7 @@ export function buildWorld(seed, Q) {
       }
       return acc.build();
     };
-    const bm = FM.mk('bankbush', 0.3), btint = new THREE.Color();
+    const bm = FM.mk('bankbush', 0.12), btint = new THREE.Color();
     const groups = [];
     for (let t = 0; t < 3000 && groups.length < Q.bankBush / 3; t++) {
       const x = (R() * 2 - 1) * 260, side = R() < 0.5 ? -1 : 1, bd = Math.pow(R(), 1.5) * 30 - 1, z = mz(x) + side * (hwAt(x) + bd);
@@ -1392,9 +1397,9 @@ export function buildWorld(seed, Q) {
     const rtA = new THREE.WebGLRenderTarget(8 * F, 2 * nIV * Fh, { ...rtOpt, type: THREE.HalfFloatType });
     const rtN = new THREE.WebGLRenderTarget(8 * F, 2 * nIV * Fh, rtOpt);
     const quad = new THREE.PlaneGeometry(IW, IH, 1, 1), qn = quad.attributes.position.count;
-    quad.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(qn), 1)); quad.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(qn * 3).fill(1), 3));
+    quad.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array([0.27, 0.27, 0, 0]), 1)); // far spruces sway as a whole (top) quad.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(qn * 3).fill(1), 3));
     const impMat = (v) => {
-      const m = patch(new THREE.MeshLambertMaterial({ vertexColors: true, alphaTest: 0.5, alphaToCoverage: !!Q.bloom }), 'imp' + v, 0, { FOLI: '' });
+      const m = patch(new THREE.MeshLambertMaterial({ vertexColors: true, alphaTest: 0.5, alphaToCoverage: !!Q.bloom }), 'imp' + v, 0.32, { FOLI: '' });
       const base = m.onBeforeCompile;
       m.customProgramCacheKey = () => 'imp' + v;
       m.onBeforeCompile = (sh) => {

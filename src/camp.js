@@ -15,6 +15,7 @@ export function createCamp(world, Q, scene, coarse) {
     if (islandE(x, z) > 0.62) continue;
     const h = H(x, z); if (h < 0.5) continue;
     let flat = 0; for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2], [1.5, 1.5], [-1.5, -1.5]]) flat += Math.abs(H(x + dx, z + dz) - h);
+    if (flat > 1.05) continue; // no more than ~5 degrees of slope
     const clear = Math.min(...trunks.map(([tx, tz, r]) => Math.hypot(tx - x, tz - z) - r));
     const sp = Math.hypot(world.spawn[0] - x, world.spawn[1] - z);
     if (clear < 3.2 || sp < 3.5) continue;
@@ -37,70 +38,108 @@ export function createCamp(world, Q, scene, coarse) {
   const yaw = Math.atan2(Math.cos(fa), Math.sin(fa)); // tent local +z (door) -> direction fa
   const group = new THREE.Group(); group.visible = false; scene.add(group);
 
-  // ---- tent: one closed canvas shell (roof panels, low side walls, end walls, door flaps) ----
+  // ---- tent: one canvas without open seams (roof and side walls extruded from one profile, end walls lofted onto
+  // the very same edge points), pinned along the seams so the wind can only billow the panels; its foot follows the ground ----
   {
-    const acc = new Acc(), L = 2.3, W = 1.05, RH = 1.3, HWL = 0.3, nz = 8, nv = 5, V3 = THREE.Vector3;
-    const cA = C('#56603f'), cB = C('#66704c'), cTop = C('#7c805c'), cDirt = C('#4b4232');
+    const acc = new Acc(), L = 2.3, W = 1.05, RH = 1.3, HWL = 0.3, V3 = THREE.Vector3;
+    const cA = C('#56603f'), cB = C('#66704c'), cTop = C('#7c805c'), cDirt = C('#4b4232'), cSeam = C('#3e4630');
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const gl = (x, z) => H(tentP.x + x * cy + z * sy, tentP.z - x * sy + z * cy) - tentP.y + 0.02; // local ground height
+    const toGround = (v) => { if (v.y < HWL) v.y += gl(v.x, v.z) * (1 - v.y / HWL); return v; };
     const colFn = (v) => {
-      tmp.copy(N.n2(v.x * 3, v.z * 3) > 0 ? cA : cB).lerp(cTop, sm(0.7, 1.3, v.y) * 0.6).lerp(cDirt, sm(0.2, 0.02, v.y) * 0.7);
+      tmp.copy(N.n2(v.x * 3, v.z * 3) > 0 ? cA : cB).lerp(cTop, sm(0.7, 1.3, v.y) * 0.6);
+      const gy = v.y - gl(v.x, v.z); tmp.lerp(cDirt, sm(0.22, 0.02, gy) * 0.7);
+      // creases toward the peg points along the eaves and down from the ridge, darker seams
+      const pz = Math.min(Math.abs(v.z + L / 2 - 0.05), Math.abs(v.z), Math.abs(v.z - L / 2 + 0.05));
+      tmp.lerp(cSeam, (sm(0.12, 0.0, pz) * sm(0.6, 0.3, v.y) + sm(0.05, 0.0, Math.abs(v.x)) * sm(1.1, 1.3, v.y)) * 0.45);
       return tmp.multiplyScalar(0.9 + 0.15 * N.n2(v.x * 9, v.y * 9 + v.z * 7));
     };
-    const tri = (pts, swF) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flatMap((p) => p.toArray()), 3)); g.computeVertexNormals(); acc.add(g, colFn, swF); };
-    for (const side of [-1, 1]) {
-      const pos = [], idx = [];
-      for (let j = 0; j <= nv; j++) for (let i = 0; i <= nz; i++) {
-        const u = i / nz, vv = j / nv, z = (u - 0.5) * L;
-        const sag = 0.05 * Math.sin(Math.PI * u) * Math.sin(Math.PI * vv);
-        const x = side * vv * W, y = RH + (HWL - RH) * vv;
-        pos.push(x - side * sag * 0.6, y - sag * 0.8, z);
+    // sway: 0 on every seam (ground, eaves, ridge, end edges), most in the middle of each panel
+    const swayF = (v) => {
+      const u = Math.max(0, Math.min(1, v.z / L + 0.5)), ez = Math.sin(Math.PI * u);
+      if (Math.abs(Math.abs(v.z) - L / 2) < 0.02) { // end walls
+        const wy = v.y >= HWL ? W * (RH - v.y) / (RH - HWL) : W;
+        return 0.6 * Math.max(0, 1 - Math.abs(v.x) / Math.max(0.05, wy)) * Math.sin(Math.PI * Math.min(1, Math.max(0, v.y) / RH));
       }
-      for (let j = 0; j < nv; j++) for (let i = 0; i < nz; i++) { const a = j * (nz + 1) + i; idx.push(a, a + 1, a + nz + 1, a + 1, a + nz + 2, a + nz + 1); }
-      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
-      acc.add(g, colFn, (v) => Math.sin(Math.PI * Math.min(1, Math.abs(v.x) / W)) * 0.5);
-      const e0 = new V3(side * W, HWL, -L / 2), e1 = new V3(side * W, HWL, L / 2), g0 = new V3(side * W, 0.02, -L / 2), g1 = new V3(side * W, 0.02, L / 2);
-      tri([e0, e1, g1], () => 0.05); tri([e0, g1, g0], () => 0.05);
+      const vv = v.y >= HWL - 0.005 ? (v.y - HWL) / (RH - HWL) : Math.max(0, v.y) / HWL;
+      return ez * Math.sin(Math.PI * Math.min(1, Math.max(0, vv))) * (v.y >= HWL ? 1 : 0.35);
+    };
+    // the cross-section: ground - wall - eave - roof - ridge - roof - eave - wall - ground
+    const prof = [[-W, 0], [-W, HWL * 0.5], [-W, HWL]];
+    for (let k = 1; k <= 5; k++) prof.push([-W + W * k / 5, HWL + (RH - HWL) * k / 5]); // ... up to the ridge [0, RH]
+    for (let k = 1; k <= 5; k++) prof.push([W * k / 5, RH - (RH - HWL) * k / 5]);       // ... down to the right eave
+    prof.push([W, HWL * 0.5], [W, 0]);
+    const nz = 10, sag = (u, x, y) => (y > HWL && y < RH ? 0.035 : y < HWL && y > 0 ? 0.02 : 0) * Math.sin(Math.PI * u); // slack canvas
+    const shell = (pts, idx) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.setIndex(idx); g.computeVertexNormals(); acc.add(g, colFn, swayF); };
+    { const pts = [], idx = [], np = prof.length;
+      for (let i = 0; i <= nz; i++) for (const [x, y] of prof) {
+        const u = i / nz, z = (u - 0.5) * L, sg = sag(u, x, y), v = toGround(new V3(x - Math.sign(x) * sg * 0.4, y - sg, z)); pts.push(v.x, v.y, v.z);
+      }
+      for (let i = 0; i < nz; i++) for (let j = 0; j < np - 1; j++) { const a = i * np + j; idx.push(a, a + np, a + 1, a + 1, a + np, a + np + 1); }
+      shell(pts, idx);
     }
-    const bz = -L / 2 - 0.01;
-    tri([new V3(0, RH + 0.01, bz), new V3(-W - 0.01, HWL, bz), new V3(W + 0.01, HWL, bz)], () => 0.08);
-    tri([new V3(-W - 0.01, HWL, bz), new V3(-W - 0.01, 0.02, bz), new V3(W + 0.01, 0.02, bz)], () => 0.02);
-    tri([new V3(-W - 0.01, HWL, bz), new V3(W + 0.01, 0.02, bz), new V3(W + 0.01, HWL, bz)], () => 0.02);
-    for (const side of [-1, 1]) {
-      const fz = L / 2 + 0.01, top = new V3(0, RH + 0.01, fz), eave = new V3(side * (W + 0.01), HWL, fz), foot = new V3(side * (W + 0.01), 0.02, fz), inner = new V3(side * 0.55, 0.02, fz + 0.45);
-      tri([top, eave, inner], (v) => (v.y < 0.4 ? 0.5 : 0.15)); tri([eave, foot, inner], () => 0.4);
+    // eave lips: the roof overhangs the walls by ~6 cm
+    for (const sd of [-1, 1]) { const pts = [], idx = [];
+      for (let i = 0; i <= nz; i++) { const z = (i / nz - 0.5) * (L + 0.06); pts.push(sd * W, HWL + 0.004, z, sd * (W + 0.065), HWL - 0.035, z); }
+      for (let i = 0; i < nz; i++) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+      shell(pts, idx);
+    }
+    // end walls lofted between the left and the right edge of the profile (back) / the outer edge and the door edge (front)
+    const half = prof.slice(0, 8); // ground -> eave -> ridge (left half, 8 points)
+    const loft = (A, B, z, n = 6) => { const pts = [], idx = [];
+      for (let j = 0; j < A.length; j++) for (let k = 0; k <= n; k++) { const t = k / n, x = A[j][0] + (B[j][0] - A[j][0]) * t, y = A[j][1] + (B[j][1] - A[j][1]) * t; const v = toGround(new V3(x, y, z)); pts.push(v.x, v.y, v.z); }
+      for (let j = 0; j < A.length - 1; j++) for (let k = 0; k < n; k++) { const a = j * (n + 1) + k; idx.push(a, a + n + 1, a + 1, a + 1, a + n + 1, a + n + 2); }
+      shell(pts, idx);
+    };
+    loft(half, half.map(([x, y]) => [-x, y]), -L / 2);
+    // front: two panels between the outer edge and the door's slanted edge (the door is open, flaps rolled and tied)
+    const DW = 0.42, DH = 1.05, door = half.map(([x, y], j) => { const t = j / (half.length - 1); return t < 0.8 ? [-DW + DW * (t / 0.8), DH * (t / 0.8)] : [0, DH + (RH - DH) * ((t - 0.8) / 0.2)]; });
+    loft(half, door, L / 2, 4); loft(half.map(([x, y]) => [-x, y]), door.map(([x, y]) => [-x, y]), L / 2, 4);
+    // the flaps rolled up along the door edges, tied with two tapes; the zip line
+    for (const sd of [-1, 1]) {
+      const p0 = toGround(new V3(sd * (DW + 0.02), 0.03, L / 2 + 0.04)), p1 = new V3(sd * 0.03, DH - 0.05, L / 2 + 0.04);
+      acc.add(limbGeo(p0, p1, 0.055, 0.04, 7, 3), (v) => tmp.copy(cB).multiplyScalar(0.82 + 0.15 * N.n2(v.y * 25, v.x * 9)), () => 0);
+      for (const t of [0.3, 0.7]) { const c = p0.clone().lerp(p1, t); acc.add(new THREE.TorusGeometry(0.058 - t * 0.012, 0.008, 4, 10).rotateX(Math.PI / 2).rotateZ(Math.atan2(p1.x - p0.x, p1.y - p0.y)).translate(c.x, c.y, c.z), () => cDirt, () => 0); }
+      acc.add(limbGeo(new V3(sd * 0.012, DH - 0.02, L / 2 + 0.005), new V3(sd * 0.012, RH - 0.02, L / 2 + 0.005), 0.006, 0.006, 3, 1), () => C('#2a2c24'), () => 0);
     }
     const W0 = W;
-    const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'tent', 0.06);
+    const mat = patch(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), 'tent', 0.12);
     const tent = new THREE.Mesh(acc.build(), mat); tent.castShadow = true; tent.receiveShadow = true;
     const poleAcc = new Acc(), ropeAcc = new Acc(), cPole = C('#6b6152'), cRope = C('#8c8468'), cPeg = C('#3b3128');
-    for (const z of [-L / 2 - 0.02, L / 2 + 0.02]) poleAcc.add(limbGeo(new V3(0, 0, z), new V3(0, RH + 0.08, z), 0.022, 0.02, 5, 1), () => cPole, () => 0);
+    for (const z of [-L / 2 - 0.02, L / 2 + 0.02]) poleAcc.add(limbGeo(new V3(0, gl(0, z) - 0.05, z), new V3(0, RH + 0.08, z), 0.022, 0.02, 5, 1), () => cPole, () => 0);
     const lines = [];
-    for (const sz of [-1, 1]) lines.push([new V3(0, RH + 0.05, sz * L / 2), new V3(0, 0.02, sz * (L / 2 + 1.15))]);
+    for (const sz of [-1, 1]) lines.push([new V3(0, RH + 0.05, sz * L / 2), new V3(0, 0, sz * (L / 2 + 1.15))]);
     const k = HWL / (RH - HWL);
-    for (const side of [-1, 1]) for (const z of [-L / 2 + 0.05, 0, L / 2 - 0.05]) lines.push([new V3(side * W, HWL, z), new V3(side * W * (1 + k), 0.02, z)]);
+    for (const side of [-1, 1]) for (const z of [-L / 2 + 0.05, 0, L / 2 - 0.05]) lines.push([new V3(side * (W + 0.06), HWL - 0.03, z), new V3(side * W * (1 + k), 0, z)]);
     for (const [p0, p1] of lines) {
+      p1.y = gl(p1.x, p1.z) + 0.03;
       ropeAcc.add(limbGeo(p0, p1, 0.006, 0.006, 3, 1), () => cRope, () => 0);
-      poleAcc.add(limbGeo(p1.clone().add(new V3(0, -0.06, 0)), p1.clone().add(new V3(0, 0.09, 0)), 0.016, 0.01, 4, 1), () => cPeg, () => 0);
+      // a little wooden tensioner on the line, the peg driven in leaning away from the tent
+      const tz = p0.clone().lerp(p1, 0.82), dir = p1.clone().sub(p0).normalize();
+      poleAcc.add(limbGeo(tz.clone().addScaledVector(dir, -0.035), tz.clone().addScaledVector(dir, 0.035), 0.012, 0.012, 4, 1), () => cPole, () => 0);
+      const out = new V3(dir.x, 0, dir.z).normalize();
+      poleAcc.add(limbGeo(p1.clone().add(new V3(-out.x * 0.04, -0.12, -out.z * 0.04)), p1.clone().add(new V3(out.x * 0.035, 0.08, out.z * 0.035)), 0.016, 0.01, 4, 1), () => cPeg, () => 0);
     }
     const poles = new THREE.Mesh(poleAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'pole', 0));
     const ropes = new THREE.Mesh(ropeAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'rope', 0));
     // inside: canvas floor, rolled sleeping bag at the back wall, backpack at a side wall
     const inAcc = new Acc(), cFloor = C('#3f4231'), cBag = C('#4f6377'), cBag2 = C('#3c4c5c'), cStrap = C('#2a2a26'), cPack = C('#8a5f38'), cPack2 = C('#6e4a2c');
     {
-      const fl = new THREE.PlaneGeometry(W0 * 1.96, L * 0.99, 10, 10); fl.rotateX(-Math.PI / 2);
+      const fl = new THREE.PlaneGeometry(W0 * 1.98, L * 0.995, 14, 14); fl.rotateX(-Math.PI / 2);
       const P = fl.attributes.position;
-      for (let i = 0; i < P.count; i++) { const x = P.getX(i), z = P.getZ(i), edge = Math.max(Math.abs(x) / (W0 * 0.98), Math.abs(z) / (L * 0.495)); P.setY(i, 0.05 + 0.015 * N.n2(x * 4, z * 4) + (edge > 0.93 ? 0.1 : 0)); }
+      for (let i = 0; i < P.count; i++) { const x = P.getX(i), z = P.getZ(i), edge = Math.max(Math.abs(x) / (W0 * 0.98), Math.abs(z) / (L * 0.495)); P.setY(i, gl(x, z) + 0.035 + 0.012 * N.n2(x * 4, z * 4) + (edge > 0.93 ? 0.1 : 0)); /* follows the ground, bathtub rim under the walls */ }
       fl.computeVertexNormals();
       inAcc.add(fl, (v) => tmp.copy(cFloor).multiplyScalar(0.85 + 0.2 * N.n2(v.x * 6, v.z * 6)), () => 0);
-      const bag = new THREE.CylinderGeometry(0.15, 0.15, 0.78, 14, 1); bag.rotateZ(Math.PI / 2); bag.translate(0, 0.2, -L / 2 + 0.3);
+      const bag = new THREE.CylinderGeometry(0.15, 0.15, 0.78, 14, 1); bag.rotateZ(Math.PI / 2); bag.translate(0, 0.2 + gl(0, -L / 2 + 0.3), -L / 2 + 0.3);
       inAcc.add(bag, (v) => (Math.abs(Math.abs(v.x) - 0.22) < 0.03 ? cStrap : (N.n2(v.x * 9, v.y * 9) > 0 ? cBag : cBag2)), () => 0);
-      for (const sx of [-1, 1]) { const end = new THREE.CircleGeometry(0.15, 14); end.rotateY(sx * Math.PI / 2); end.translate(sx * 0.39, 0.2, -L / 2 + 0.3); inAcc.add(end, (v) => tmp.copy(cBag2).lerp(cBag, Math.hypot(v.y - 0.2, v.z + L / 2 - 0.3) * 5), () => 0); }
+      for (const sx of [-1, 1]) { const end = new THREE.CircleGeometry(0.15, 14); end.rotateY(sx * Math.PI / 2); end.translate(sx * 0.39, 0.2 + gl(0, -L / 2 + 0.3), -L / 2 + 0.3); inAcc.add(end, (v) => tmp.copy(cBag2).lerp(cBag, Math.hypot(v.y - 0.2, v.z + L / 2 - 0.3) * 5), () => 0); }
       const px = 0.55 * (R() < 0.5 ? -1 : 1), pz = 0.15;
       const body = new THREE.BoxGeometry(0.2, 0.46, 0.32, 2, 3, 2); body.translate(0, 0.28, 0);
       const BP = body.attributes.position; for (let i = 0; i < BP.count; i++) { BP.setX(i, BP.getX(i) * (1 - 0.15 * (BP.getY(i) - 0.05))); BP.setZ(i, BP.getZ(i) * (0.95 + 0.1 * Math.sin(BP.getY(i) * 6))); }
       body.computeVertexNormals();
       const flap = new THREE.BoxGeometry(0.22, 0.05, 0.34); flap.translate(0, 0.52, 0.01);
       const pocket = new THREE.BoxGeometry(0.07, 0.18, 0.22); pocket.translate(-Math.sign(px) * 0.12, 0.22, 0);
-      for (const g of [body, flap, pocket]) { g.rotateZ(-Math.sign(px) * 0.25); g.translate(px, 0, pz); inAcc.add(g, (v) => (g === body ? cPack : cPack2), () => 0); }
+      for (const g of [body, flap, pocket]) { g.rotateZ(-Math.sign(px) * 0.25); g.translate(px, gl(px, pz) + 0.02, pz); inAcc.add(g, (v) => (g === body ? cPack : cPack2), () => 0); }
     }
     const inside = new THREE.Mesh(inAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'tentin', 0)); inside.receiveShadow = true;
     const tg = new THREE.Group(); tg.add(tent, poles, ropes, inside);
