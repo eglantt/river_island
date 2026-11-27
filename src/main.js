@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.38 alpha';
+const VERSION = '0.0.39 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -260,6 +260,14 @@ function updateEnv(dt) {
   // are not lighter than the overcast or night sky above them
   U.uHaze.value.copy(hor).lerp(U.uCloudDark.value, Math.min(1, W.cover * 0.9) * (0.6 + 0.4 * night));
   const fogC = tc.copy(U.uHaze.value).lerp(zen, 0.15);
+  { // mountains read darker than the sky at night and under clouds: dimmer haze, less of it, darker slopes;
+    // moonlight lifts them a little (the lit side comes from the moon light itself)
+    const moon = mBright * sm(0, 0.15, md.y) * (1 - c);
+    U.uMtnK.value.set(
+      (1 - 0.65 * c * c) * (1 - night) + (0.2 + 0.08 * moon) * night,
+      1 - 0.65 * night,
+      (1 - 0.4 * c * c) * (1 - night) + (0.1 + 0.08 * moon) * night);
+  }
   if (W.mist > 0.3) fogC.lerp(grey(hor, 1.05), 0.5);
   scene.fog.color.copy(fogC); scene.fog.near = W.near; scene.fog.far = W.far * (1 - dawnMist * 0.4); U.uFogNear.value = scene.fog.near; U.uFogFar.value = scene.fog.far;
   U.uFogCol.value.copy(fogC).lerp(tc.setRGB(0.6, 0.65, 0.7).multiplyScalar(day * 0.8 + 0.1), 0.25);
@@ -487,7 +495,8 @@ function frame(now) {
   U.uCam.value.copy(camera.position);
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
-  ducks.update(dt, gameTime, env);
+  // ducks, like the snakes, notice only the walking player
+  ducks.update(dt, gameTime, Object.assign({}, env, { cam: S.mode === 'walk' && !freeCam ? camera.position : null, quack: (x, z, n, k) => audio.quack(x, z, n, k) }));
   // snakes notice only the walking player; the free camera and the auto flight are invisible to them
   if (showMarks && freeCam) {
     if (!snakeMarks) { snakeMarks = snakes.list().map(() => { const m = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.7, 12).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xff3020, depthTest: false })); m.renderOrder = 99; scene.add(m); return m; }); }

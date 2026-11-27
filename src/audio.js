@@ -106,6 +106,27 @@ export async function testCrackle() {
   return { oldRms: +o.toFixed(4), newRms: +n.toFixed(4), ratio: +(n / o).toFixed(2) };
 }
 
+// mallard (hen) quack series: nasal, falling "quaak-quak-quak", each note shorter and lower
+export function quackCall(ac, out, n, vol, t0) {
+  const R = Math.random, f0 = 300 + R() * 60;
+  const pre = ac.createGain();
+  const f1 = ac.createBiquadFilter(); f1.type = 'bandpass'; f1.frequency.value = 950 + R() * 150; f1.Q.value = 5;
+  const f2 = ac.createBiquadFilter(); f2.type = 'bandpass'; f2.frequency.value = 2300 + R() * 300; f2.Q.value = 6;
+  const g2 = ac.createGain(); g2.gain.value = 0.6;
+  const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
+  pre.connect(f1); pre.connect(f2); f2.connect(g2); f1.connect(hp); g2.connect(hp); hp.connect(out);
+  let t = t0;
+  for (let i = 0; i < n; i++) {
+    const u = i / Math.max(1, n - 1), dur = (i === 0 ? 0.26 : 0.17) * (1 - 0.3 * u) * (0.9 + R() * 0.2);
+    const o = ac.createOscillator(), g = ac.createGain(); o.type = 'sawtooth';
+    const fp = f0 * (1 - 0.18 * u);
+    o.frequency.setValueAtTime(fp * 1.06, t); o.frequency.linearRampToValueAtTime(fp * 0.9, t + dur);
+    const pk = vol * (1 - 0.45 * u);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(pk, t + 0.02); g.gain.setValueAtTime(pk * 0.8, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(pre); o.start(t); o.stop(t + dur + 0.03);
+    t += dur + 0.09 + R() * 0.05;
+  }
+}
 export function frogCall(ac, out, fr, vol, t0) {
   const R = Math.random, n = 5 + Math.floor(R() * 10), step = 1 / (fr.rate * (0.9 + R() * 0.2));
     const pre = ac.createGain(); pre.gain.value = 1;
@@ -208,6 +229,13 @@ export function createAudio() {
     const g = 1 / (1 + Math.pow(d / 7, 1.6));
     const out = panner(pan); frogCall(ac, out, fr, vol * g, ac.currentTime + 0.02);
   };
+  function quack(x, z, n, k) {
+    if (!ac) return;
+    const dx = x - lis.x, dz = z - lis.z, d = Math.hypot(dx, dz) + 0.5;
+    const rx = Math.cos(lis.yaw), rz = -Math.sin(lis.yaw), pan = Math.max(-0.9, Math.min(0.9, (dx * rx + dz * rz) / d));
+    const g = 1 / (1 + Math.pow(d / 9, 1.5));
+    quackCall(ac, panner(pan), n, 0.5 * k * g, ac.currentTime + 0.03);
+  }
   function frog(fr, vol) { const out = panner(fr.pan); frogCall(ac, out, fr, vol, ac.currentTime + 0.02); }
   function owl(vol) {
     const t0 = ac.currentTime, out = panner(R() * 1.2 - 0.6);
@@ -284,5 +312,5 @@ export function createAudio() {
     else fireSt.next = now + 0.2;
   }
   function suspend(v) { if (!ac) return; v ? ac.suspend() : ac.resume(); }
-  return { init, update, splash, thunder, step, fireSound, suspend, setFrogs, get on() { return !!ac; } };
+  return { init, update, splash, thunder, step, fireSound, suspend, setFrogs, quack, get on() { return !!ac; } };
 }

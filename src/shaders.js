@@ -14,7 +14,7 @@ export const U = {
   uSnk: { value: Array.from({ length: 72 }, () => new THREE.Vector4(0, 0, -100, 0)) }, uSnB: { value: Array.from({ length: 3 }, () => new THREE.Vector4(0, 0, 0, 0)) },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
-  uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uHaze: { value: new THREE.Color() }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
+  uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uHaze: { value: new THREE.Color() }, uMtnK: { value: new THREE.Vector3(1, 1, 1) }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
   uRiver: { value: new THREE.Vector4(0, 0, 0, 40) }, // meander a1,f1(phase),.., halfwidth
 };
 
@@ -74,13 +74,13 @@ gl_Position = projectionMatrix * mvPosition;
 export function patch(mat, key, amp = 0, defs = {}) {
   mat.defines = Object.assign({}, mat.defines || {}, defs);
   mat.onBeforeCompile = (sh) => {
-    for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar']) sh.uniforms[k] = U[k];
+    for (const k of ['uAmb', 'uSunCol', 'uCampOn', 'uCampA', 'uCampB', 'uOpen', 'uTime', 'uWind', 'uWindDir', 'tNoise', 'uCloudOff', 'uCover', 'uSunDir', 'uSunVis', 'uWet', 'uSunOcc', 'uZen', 'uHor', 'uGlow', 'uDark', 'uSkyFog', 'uFogSky', 'uFogNear', 'uFogFar', 'uHaze', 'uMtnK']) sh.uniforms[k] = U[k];
     sh.uniforms.uAmp = { value: amp };
     if (defs.SAFE !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  { vec4 c_ = gl_FragColor; if (!(abs(c_.r) < 1e4 && abs(c_.g) < 1e4 && abs(c_.b) < 1e4 && abs(c_.a) < 1e4)) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); }');
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
     sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
-    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
+    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze, uMtnK;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <alphatest_fragment>', `#ifdef CARD
         { vec3 fn = normalize(cross(dFdx(vWp), dFdy(vWp))); vec3 vd = normalize(cameraPosition - vWp); diffuseColor.a *= smoothstep(0.06, 0.32, abs(dot(fn, vd))); }
       #endif
@@ -118,9 +118,12 @@ export function patch(mat, key, amp = 0, defs = {}) {
           outgoingLight *= 1.0 - 0.5 * back;
           float f = clamp((dist - uFogNear) / (uFogFar - uFogNear), 0.0, 1.0);
           float fMax = mix(0.86, 0.5, pow(sd, 2.0) * sunLow);
-          f = min(f, mix(fMax, 1.0, uFogSky));
+          // uMtnK: x = haze brightness vs the sky (<1 at night / under clouds), y = max haze share, z = slope light
+          float fogK = smoothstep(0.45, 0.95, uFogSky); // real fog: the plain fog colour wins
+          f = min(f, mix(min(fMax, uMtnK.y), 1.0, uFogSky));
+          outgoingLight *= mix(uMtnK.z, 1.0, fogK);
           vec3 haze = mix(uSkyFog, uHaze + uGlow * pow(sd, 4.0) * 0.22 * (1.0 - uDark) * (1.0 - uCover * 0.8), 0.55 * (1.0 - uFogSky));
-          haze = mix(haze, haze * 0.62, back);
+          haze = mix(haze, haze * 0.62, back) * mix(uMtnK.x, 1.0, fogK);
           outgoingLight = mix(outgoingLight, haze, f);
         #endif
         #ifdef DETAIL
@@ -287,7 +290,7 @@ export function waterMaterial() {
     fragmentShader: /* glsl */`
       #include <fog_pars_fragment>
       uniform sampler2D tNoise, tWaterN, tDepth, tHzn; uniform vec2 uCloudOff, uWindDir; uniform float uCover, uDark, uSunVis, uTime, uRain, uWind, uMoonVis, uFlash, uNight, uSunOcc, uMoonOcc;
-      uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog; uniform float uFogSky;
+      uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog, uMtnK; uniform float uFogSky;
       uniform vec4 uRip[4]; uniform vec4 uDuck[6]; uniform vec4 uSnk[72]; uniform vec4 uSnB[3]; uniform vec4 uDepthBox, uRiver, uBolt;
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
@@ -396,7 +399,7 @@ export function waterMaterial() {
           float mtn = (1.0 - smoothstep(hz - 0.004, hz + 0.004, rel));
           vec3 vdf = normalize(vec3(R.x, max(R.y, 0.015), R.z));
           float sdm = max(dot(vdf, uSunDir), 0.0), sunLow = 1.0 - smoothstep(0.04, 0.4, uSunDir.y);
-          vec3 mcol = mix(uSkyFog, uHor + uGlow * pow(sdm, 4.0) * 0.22 * (1.0 - uDark), 0.55 * (1.0 - uFogSky)) * (0.8 - 0.32 * pow(sdm, 3.0) * sunLow * (1.0 - uDark));
+          vec3 mcol = mix(uSkyFog, uHor + uGlow * pow(sdm, 4.0) * 0.22 * (1.0 - uDark), 0.55 * (1.0 - uFogSky)) * (0.8 - 0.32 * pow(sdm, 3.0) * sunLow * (1.0 - uDark)) * mix(uMtnK.x, 1.0, smoothstep(0.45, 0.95, uFogSky));
           refl = mix(refl, mcol, mtn * (1.0 - uFogSky * 0.6));
         }
         refl = mix(refl, uSkyFog, uFogSky*0.75);
