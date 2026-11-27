@@ -241,14 +241,28 @@ export function skyMaterial() {
           col = mix(col, uHor, (1.0 - smoothstep(0.0, 0.06, d.y)) * 0.6);
         }
         if (uRainbow > 0.001 && d.y > 0.0) {
+          // primary bow: red outside at ~42 deg from the antisolar point, violet inside at ~40 deg
           float ang = acos(clamp(dot(d, -uSunDir), -1.0, 1.0));
-          float t = (ang - 0.692) / 0.042; // ~39.6..42 deg: violet inside, red outside
-          if (t > -0.3 && t < 1.3) {
-            vec3 rb = clamp(vec3(abs(t * 6.0 - 3.6) - 1.0, 2.0 - abs(t * 6.0 - 2.4), 2.0 - abs(t * 6.0 - 1.2)), 0.0, 1.0);
-            float a = smoothstep(-0.3, 0.1, t) * (1.0 - smoothstep(0.9, 1.3, t)) * smoothstep(0.0, 0.08, d.y);
-            col += rb * a * uRainbow * 0.5 * (1.0 - cov * 0.5);
-            col += vec3(0.5, 0.52, 0.55) * (1.0 - smoothstep(-0.3, 0.0, t)) * smoothstep(-1.2, -0.3, t) * uRainbow * 0.05;
+          float t = (ang - 0.698) / 0.035;               // 0 = violet edge, 1 = red edge
+          float hz = smoothstep(0.0, 0.08, d.y) * uRainbow * (1.0 - cov * 0.5);
+          if (t > -0.35 && t < 1.35) {
+            float wl = 400.0 + 300.0 * clamp(t, 0.0, 1.0); // wavelength, nm
+            vec3 rb;                                        // spectral colour (Bruton's approximation)
+            if (wl < 440.0) rb = vec3(-(wl - 440.0) / 40.0, 0.0, 1.0);
+            else if (wl < 490.0) rb = vec3(0.0, (wl - 440.0) / 50.0, 1.0);
+            else if (wl < 510.0) rb = vec3(0.0, 1.0, -(wl - 510.0) / 20.0);
+            else if (wl < 580.0) rb = vec3((wl - 510.0) / 70.0, 1.0, 0.0);
+            else if (wl < 645.0) rb = vec3(1.0, -(wl - 645.0) / 65.0, 0.0);
+            else rb = vec3(1.0, 0.0, 0.0);
+            float fe = wl < 420.0 ? 0.35 + 0.65 * (wl - 380.0) / 40.0 : (wl > 680.0 ? 0.35 + 0.65 * (720.0 - wl) / 40.0 : 1.0);
+            rb *= fe;
+            float a = smoothstep(-0.35, 0.05, t) * (1.0 - smoothstep(1.02, 1.25, t)) * hz;
+            float lum = dot(col, vec3(0.3, 0.55, 0.15));
+            col = mix(col, rb * (0.2 + 1.15 * lum), a * 0.62) + rb * a * 0.05;
           }
+          // brighter sky inside the bow, darker Alexander band just outside it
+          col *= 1.0 + 0.07 * (1.0 - smoothstep(0.62, 0.7, ang)) * smoothstep(0.2, 0.55, ang) * hz;
+          col *= 1.0 - 0.06 * smoothstep(0.735, 0.76, ang) * (1.0 - smoothstep(0.82, 0.88, ang)) * hz;
         }
         float hb = uFogSky * (1.0 - smoothstep(-0.02, 0.22 + 0.55*uFogSky, d.y));
         col = mix(col, uSkyFog, max(hb, uFogSky*uFogSky*0.8));
