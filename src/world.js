@@ -184,12 +184,15 @@ export function buildWorld(seed, Q) {
       const e2 = dx * dx + dz * dz + 0.15 * N.n2(x * 0.08, z * 0.08);
       if (e2 < 3) h = Math.max(h, 0.26 - 0.58 * e2 + 0.04 * N.n2(x * 0.3, z * 0.3));
     }
-    h = Math.max(h, tbHeight(x, z));
     const e = islandE(x, z);
     if (e < 1.6) {
       const core = 0.42 + 2.4 * Math.max(0, 1 - e * e) * (0.75 + 0.25 * N.n2(x * 0.07, z * 0.07)) + 0.35 * N.fbm(x * 0.08, z * 0.08, 2) * Math.max(0, 1 - e);
       const s = sm(0.82, 1.32, e);
       h = Math.max(h, core * (1 - s) - 3.1 * s);
+    }
+    { // smooth union with the tail bar: the shore runs round into the bar in a curve, no shoulders
+      const hb = tbHeight(x, z), k = 0.55, dd = Math.max(k - Math.abs(h - hb), 0) / k;
+      h = Math.max(h, hb) + dd * dd * k * 0.25;
     }
     return h;
   }
@@ -207,26 +210,37 @@ export function buildWorld(seed, Q) {
   const cSand = C('#b7a27a'), cWet = C('#6e6146'), cBed = C('#4d4a35'), cBedDeep = C('#2f3a2b'), cGrass = C('#5f8f3a'), cGrass2 = C('#86a043'), cGrass3 = C('#4a7a30'), cDirt = C('#735f42'), cForest = C('#2f4a24'), cMoss = C('#3e5e2c');
   const tmp = new THREE.Color();
   const sbE = (x, z) => { const [cx, cz] = sbC(), dx = (x - cx) / sbL, dz = (z - cz) / sbW; return dx * dx + dz * dz + 0.15 * N.n2(x * 0.08, z * 0.08); };
+  // colours blend smoothly (no straight cut lines): underwater bed -> wet sand -> dry sand -> grass, with the sand of the
+  // tail bar and of the bank sand bar fading in along noisy edges
+  const cU = new THREE.Color(), cS = new THREE.Color(), cG = new THREE.Color();
   const terrainColor = (x, z, h) => {
     const sl = Math.min(1, (Math.abs(H(x + 1, z) - h) + Math.abs(H(x, z + 1) - h)) * 0.9);
-    const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z);
-    const onTB = h < 0.5 && tbFrame(x, z)[0] > 0.25 && tbHeight(x, z) > -0.9;
-    if (onTB && h < 0.15) tmp.copy(cSand).multiplyScalar(0.92).lerp(cWet, sm(0.15, -0.1, h) * 0.75).lerp(cBed, sm(-0.3, -0.9, h) * 0.6); // sandy shoal round the tail bar
-    else if (h < -1.2) tmp.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h));
-    else if (h < -0.15) tmp.copy(cWet).lerp(cBed, sm(-0.15, -1.2, h));
-    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8 || (tbQ(x, z) < 2.3 && tbFrame(x, z)[0] > 0.28)) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
-    else {
-      tmp.copy(cGrass).lerp(nz > 0 ? cGrass2 : cGrass3, Math.abs(nz) * 0.8);
-      tmp.lerp(cDirt, sm(0.35, 0.8, sl) * 0.8);
-      tmp.lerp(cForest, sm(14, 60, bd) * (islandE(x, z) > 1.2 ? 1 : 0));
-      tmp.lerp(cMoss, sm(70, 400, bd) * 0.5);
-    }
-    return tmp;
+    const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z), n2 = N.n2(x * 0.31, z * 0.31 + 4.1);
+    const s0 = tbFrame(x, z)[0], tq = tbQ(x, z);
+    const barK = sm(0.15, 0.33, s0 + 0.07 * n2) * sm(2.8, 1.9, tq + 0.25 * n2);
+    const sbK = sm(2.2, 1.5, sbE(x, z) + 0.2 * n2);
+    // under water
+    if (h < -1.2) cU.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h)); else cU.copy(cWet).lerp(cBed, sm(-0.15, -1.2, h));
+    const shoal = sm(0.14, 0.3, s0 + 0.07 * n2) * sm(-1.05, -0.55, tbHeight(x, z));
+    if (shoal > 0) cU.lerp(tmp.copy(cSand).multiplyScalar(0.92).lerp(cWet, sm(0.1, -0.3, h) * 0.75).lerp(cBed, sm(-0.3, -0.95, h) * 0.6), shoal);
+    // sand at the water's edge
+    cS.copy(cSand).lerp(cWet, sm(0.15, -0.15, h));
+    // grass
+    cG.copy(cGrass).lerp(nz > 0 ? cGrass2 : cGrass3, Math.abs(nz) * 0.8);
+    cG.lerp(cDirt, sm(0.35, 0.8, sl) * 0.8);
+    cG.lerp(cForest, sm(14, 60, bd) * sm(1.1, 1.3, islandE(x, z)));
+    cG.lerp(cMoss, sm(70, 400, bd) * 0.5);
+    const gK = sm(0.27 + nz * 0.12, 0.4 + nz * 0.12 + 0.05 * n2, h) * (1 - Math.max(barK, sbK));
+    tmp.copy(cS).lerp(cG, gK);
+    return tmp.lerp(cU, sm(-0.05, -0.25, h)).clone();
   };
+  // fine-grid patch over the island and its tail bar (shoreline, wet band and grass edge without grid steps)
+  const IP = { x0: -45, x1: 62, z0: zc0 - 33, z1: zc0 + 33, step: Q.terr >= 180 ? 0.5 : 0.8 };
+  const inIslePatch = (x, z) => x > IP.x0 + 4 && x < IP.x1 - 4 && z > IP.z0 + 4 && z < IP.z1 - 4;
   const inCliffPatch = (x, z) => { if (x < cxa + 10 || x > cxb - 10) return false; const zc = mz(x), dd = (z - zc) * cliffSide, hw = hwAt(x); return dd > hw - 3 && dd < hw + 18; };
   for (let i = 0; i < tp.count; i++) {
     const x = map(tp.getX(i)), z = mapZ(tp.getZ(i)) + mz(x) * shiftZ(tp.getZ(i));
-    const h = H(x, z); tp.setXYZ(i, x, h - (inCliffPatch(x, z) ? 1.5 : 0), z);
+    const h = H(x, z); tp.setXYZ(i, x, h - (inCliffPatch(x, z) || inIslePatch(x, z) ? 1.5 : 0), z);
     terrainColor(x, z, h).toArray(cols, i * 3);
   }
   tg.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -250,6 +264,30 @@ export function buildWorld(seed, Q) {
   const terrainMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'terrain', 0, { DETAIL: '' });
   const terrain = new THREE.Mesh(tg, terrainMat);
   terrain.receiveShadow = true; group.add(terrain);
+  {
+    const { x0, z0, step } = IP, nx = Math.ceil((IP.x1 - x0) / step), nzr = Math.ceil((IP.z1 - z0) / step), A = nx + 1;
+    const pos = new Float32Array(A * (nzr + 1) * 3), col = new Float32Array(A * (nzr + 1) * 3), hh = new Float32Array(A * (nzr + 1)), idx = [];
+    for (let j = 0; j <= nzr; j++) for (let i = 0; i <= nx; i++) {
+      const x = x0 + i * step, z = z0 + j * step, h = H(x, z), k = j * A + i;
+      pos[k * 3] = x; pos[k * 3 + 1] = h; pos[k * 3 + 2] = z; hh[k] = h; terrainColor(x, z, h).toArray(col, k * 3);
+    }
+    for (let j = 0; j < nzr; j++) for (let i = 0; i < nx; i++) { const a0 = j * A + i; idx.push(a0, a0 + A, a0 + 1, a0 + 1, a0 + A, a0 + A + 1); }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setAttribute('sway', new THREE.BufferAttribute(new Float32Array(A * (nzr + 1)), 1));
+    g.setIndex(idx); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'terrain', 0, { DETAIL: '' }));
+    m.receiveShadow = true; group.add(m);
+    // the visible height there is this grid's triangles
+    const HmMain = Hmesh;
+    Hmesh = (x, z) => {
+      const fi = (x - x0) / step, fj = (z - z0) / step;
+      if (fi < 0 || fj < 0 || fi >= nx || fj >= nzr) return HmMain(x, z);
+      const i = Math.floor(fi), j = Math.floor(fj), fx = fi - i, fz = fj - j, k = j * A + i;
+      const h00 = hh[k], h10 = hh[k + 1], h01 = hh[k + A], h11 = hh[k + A + 1];
+      return fx + fz < 1 ? h00 + fx * (h10 - h00) + fz * (h01 - h00) : h11 + (1 - fx) * (h01 - h11) + (1 - fz) * (h10 - h11);
+    };
+  }
   // fine-grid patch for the cliff bank (0.6 m), main terrain is tucked below it
   {
     const step = 0.4, x0 = cxa - 5, x1 = cxb + 5, nx = Math.ceil((x1 - x0) / step), nzr = Math.ceil(28 / step), A = nx + 1, pos = [], col = [], idx = [], cl = [];
