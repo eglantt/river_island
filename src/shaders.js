@@ -201,7 +201,11 @@ export function skyMaterial() {
             }
             vec3 ax = normalize(vec3(0.45, 0.35, -0.82));
             float band = exp(-pow(dot(d, ax), 2.0) * 16.0);
-            float mw = band * smoothstep(0.3, 0.9, texture2D(tNoise, vec2(atan(d.z, d.x)*0.6, d.y*1.1)).r*0.6 + texture2D(tNoise, d.xz*2.0).g*0.4);
+            // seamless: triplanar noise by direction (no azimuth angle, so no wrap-around seam)
+            vec3 tw = pow(abs(d), vec3(4.0)); tw /= (tw.x + tw.y + tw.z);
+            float n1 = texture2D(tNoise, d.yz * 0.55 + 0.3).r * tw.x + texture2D(tNoise, d.xz * 0.55 + 0.7).r * tw.y + texture2D(tNoise, d.xy * 0.55 + 0.1).r * tw.z;
+            float n2 = texture2D(tNoise, d.yz * 2.0).g * tw.x + texture2D(tNoise, d.xz * 2.0).g * tw.y + texture2D(tNoise, d.xy * 2.0 + 0.5).g * tw.z;
+            float mw = band * smoothstep(0.3, 0.9, n1 * 0.6 + n2 * 0.4);
             col += vec3(0.5, 0.55, 0.78) * mw * mw * 0.07 * uNight;
           }
           // moon

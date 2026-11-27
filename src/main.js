@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.33 alpha';
+const VERSION = '0.0.34 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -90,7 +90,7 @@ function applyRenderQuality() {
 }
 
 // ---------- player ----------
-const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0 };
+const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0, crouch: 0 };
 let curve = null, flyU = 0;
 function build() {
   if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); snakes.dispose(); camp.dispose(); }
@@ -144,6 +144,7 @@ pad.addEventListener('pointerdown', (e) => {
   try { pad.setPointerCapture(e.pointerId); } catch (_) { /* ignore */ }
   if (e.pointerType !== 'mouse') ctlTouch();
   if (freeCam && e.pointerType !== 'mouse' && touchUI()) { const db = $('down').getBoundingClientRect(); if (onJumpBtn(e.clientX, e.clientY)) { upHeld = 1; upId = e.pointerId; return; } if ($('down').classList.contains('vis') && Math.hypot(e.clientX - db.left - 36, e.clientY - db.top - 36) < 50) { upHeld = -1; upId = e.pointerId; return; } }
+  if (e.pointerType !== 'mouse' && touchUI() && $('crouch').classList.contains('vis')) { const cb = $('crouch').getBoundingClientRect(); if (Math.hypot(e.clientX - cb.left - 36, e.clientY - cb.top - 36) < 44) { crouchT = !crouchT; $('crouch').classList.toggle('down', crouchT); return; } }
   if (e.pointerType !== 'mouse' && touchUI() && onJumpBtn(e.clientX, e.clientY)) { jumpReq = true; jumpEl.classList.add('down'); setTimeout(() => jumpEl.classList.remove('down'), 150); return; }
   if (e.pointerType !== 'mouse' && touchUI() && !rjoy && e.clientX >= innerWidth * 0.5 && e.clientY > innerHeight * 0.5) {
     // right joystick appears under the finger, jump button just below it (or to its left near the bottom edge)
@@ -152,7 +153,7 @@ pad.addEventListener('pointerdown', (e) => {
     showEl(rstickEl, cx - r, cy - r);
     const below = cy + r + 14 + 72 < innerHeight - 6;
     showEl(jumpEl, below ? cx - 36 : cx - r - 14 - 72, below ? cy + r + 14 : cy - 36);
-    if (freeCam) { const jb = jumpEl.getBoundingClientRect(); showEl($('down'), jb.left - 84, jb.top); }
+    { const jb = jumpEl.getBoundingClientRect(); if (freeCam) showEl($('down'), jb.left - 84, jb.top); showEl($('crouch'), jb.left - (freeCam ? 168 : 84), jb.top); }
     return;
   }
   if (e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.5 && !joy && (S.mode === 'walk' || freeCam)) {
@@ -319,13 +320,15 @@ function surface() {
   if (h < 0.42) return 'sand';
   return 'grass';
 }
+let crouchT = false; // touch crouch / slow toggle
 let freeCam = false; const FC = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 }; let upHeld = 0;
 function updatePlayer(dt) {
   if (freeCam) {
     FC.yaw -= lookDX * (coarse ? 0.0055 : 0.0035) + rv.x * Math.abs(rv.x) * dt * 2.4; FC.pitch = clamp(FC.pitch - lookDY * (coarse ? 0.0045 : 0.003) - rv.y * Math.abs(rv.y) * dt * 1.6, -1.5, 1.5); lookDX = lookDY = 0;
     let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - jv.y, s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + jv.x;
-    const u = (keys.KeyE || keys.Space ? 1 : 0) - (keys.KeyQ || keys.KeyC ? 1 : 0) + upHeld;
-    const sp = (keys.ShiftLeft || keys.ShiftRight ? 120 : 18) * (1 + Math.max(0, FC.pos.y - 30) / 120);
+    const u = (keys.KeyE || keys.Space ? 1 : 0) - (keys.KeyQ ? 1 : 0) + upHeld;
+    const slow = keys.KeyC || crouchT;
+    const sp = (slow ? 4.5 : keys.ShiftLeft || keys.ShiftRight ? 120 : 18) * (1 + Math.max(0, FC.pos.y - 30) / 120);
     const cp = Math.cos(FC.pitch);
     fwd.set(-Math.sin(FC.yaw) * cp, Math.sin(FC.pitch), -Math.cos(FC.yaw) * cp); right.set(Math.cos(FC.yaw), 0, -Math.sin(FC.yaw));
     FC.pos.addScaledVector(fwd, f * sp * dt).addScaledVector(right, s * sp * dt); FC.pos.y += u * sp * dt;
@@ -347,7 +350,9 @@ function updatePlayer(dt) {
   let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0) - jv.y;
   let s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + jv.x;
   const l = Math.hypot(f, s); if (l > 1) { f /= l; s /= l; }
-  const speed = (keys.ShiftLeft || keys.ShiftRight ? 4.2 : 2.3) * (joy ? 1.3 : 1);
+  const crouch = !!(keys.KeyC || crouchT); P.crouch += ((crouch ? 1 : 0) - P.crouch) * Math.min(1, dt * 12);
+  const run = (keys.ShiftLeft || keys.ShiftRight) && !crouch;
+  const speed = (crouch ? 1.05 : run ? 4.2 : 2.3) * (joy ? 1.3 : 1);
   fwd.set(-Math.sin(P.yaw), 0, -Math.cos(P.yaw)); right.set(Math.cos(P.yaw), 0, -Math.sin(P.yaw));
   const dx = (fwd.x * f + right.x * s) * speed * dt, dz = (fwd.z * f + right.z * s) * speed * dt;
   if (l > 0.05) {
@@ -356,15 +361,15 @@ function updatePlayer(dt) {
     if (P.jy <= 0) P.bob += dt * Math.min(1, l) * speed * 3.2;
   }
   // jump
-  if (jumpReq) { jumpReq = false; if (P.jy <= 0 && P.vy === 0) P.vy = 3.2; }
+  if (jumpReq) { jumpReq = false; if (P.jy <= 0 && P.vy === 0) P.vy = crouch ? 2.2 : 3.2; }
   if (P.vy !== 0 || P.jy > 0) {
     P.vy -= 9.8 * dt; P.jy += P.vy * dt;
     if (P.jy <= 0) { P.jy = 0; P.vy = 0; P.squat = 0.09; audio.step(surface(), 1.6); }
   }
   P.squat = Math.max(0, P.squat - dt * 0.45);
   // footsteps on each down-beat of the walk bob
-  const beat = Math.floor(P.bob / Math.PI); if (beat !== P.lastStep) { P.lastStep = beat; if (P.jy <= 0) audio.step(surface(), keys.ShiftLeft || keys.ShiftRight ? 1.2 : 0.9); }
-  const gy = world.H(P.pos.x, P.pos.z) + P.eye + Math.sin(P.bob) * 0.035;
+  const beat = Math.floor(P.bob / Math.PI); if (beat !== P.lastStep) { P.lastStep = beat; if (P.jy <= 0) audio.step(surface(), crouch ? 0.45 : run ? 1.2 : 0.9); }
+  const gy = world.H(P.pos.x, P.pos.z) + P.eye - 0.65 * P.crouch + Math.sin(P.bob) * 0.035 * (1 - 0.5 * P.crouch);
   P.gy += (gy - P.gy) * Math.min(1, dt * 10);
   P.pos.y = P.gy + P.jy - P.squat;
   camera.position.copy(P.pos);
@@ -498,7 +503,7 @@ function frame(now) {
   const mn = Math.floor(S.hour * 60);
   if (mn !== lastMin || S.weather !== lastWx) { lastMin = mn; lastWx = S.weather; $('clock').textContent = `${fmt(S.hour)} · ${WEATHER[S.weather].name}`; if (!panel.hidden) { $('hour').value = S.hour; $('hourval').textContent = fmt(S.hour); } }
   document.body.classList.toggle('touchui', touchUI());
-  if (!joy && !rjoy && !look && performance.now() - ctlLast > 3000) for (const el of [stick, rstickEl, jumpEl, $('down')]) el.classList.remove('vis');
+  if (!joy && !rjoy && !look && performance.now() - ctlLast > 3000) for (const el of [stick, rstickEl, jumpEl, $('down'), $('crouch')]) el.classList.remove('vis');
   $('clock').hidden = !S.clock; $('fps').hidden = !S.fps;
   if (S.fps) { renderer.getDrawingBufferSize(dbs); $('fps').textContent = `${Math.round(fpsS)} к/с · ${Q.name.toLowerCase()} · ${dbs.x}×${dbs.y}`; }
   if ((hintT += dt) > 1) {
