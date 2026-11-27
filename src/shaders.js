@@ -67,6 +67,9 @@ float sw = sway * uAmp;
 vec2 wv = uWindDir * (uWind*(0.25 + 1.5*gst*gst)) + vec2(sin(uTime*1.9 + wpp.x*0.8 + wpp.z*0.35), cos(uTime*1.45 + wpp.z*0.7)) * 0.1 * (0.25 + uWind);
 wpp.xz += wv * sw; wpp.y -= dot(wv,wv) * sw * 0.3;
 vWp = wpp.xyz; vWN = normal;
+#ifdef CLIFF
+vCl = aCl;
+#endif
 mvPosition = viewMatrix * wpp;
 gl_Position = projectionMatrix * mvPosition;
 `;
@@ -78,25 +81,58 @@ export function patch(mat, key, amp = 0, defs = {}) {
     sh.uniforms.uAmp = { value: amp };
     if (defs.SAFE !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  { vec4 c_ = gl_FragColor; if (!(abs(c_.r) < 1e4 && abs(c_.g) < 1e4 && abs(c_.b) < 1e4 && abs(c_.a) < 1e4)) gl_FragColor = vec4(0.04, 0.07, 0.065, 1.0); }');
     if (defs.NOFLIP !== undefined) sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', THREE.ShaderChunk.normal_fragment_begin.replace('normal *= faceDirection;', ''));
-    sh.vertexShader = `attribute float sway;\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
+    sh.vertexShader = `attribute float sway;\n#ifdef CLIFF\nattribute vec2 aCl;\nvarying vec2 vCl;\n#endif\nuniform float uTime, uWind, uAmp, uOpen, uCampOn;\nuniform vec4 uCampA, uCampB;\nuniform vec2 uWindDir;\nuniform sampler2D tNoise;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` +
       sh.vertexShader.replace('#include <project_vertex>', PROJ);
-    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze, uMtnK;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n` + CLOUD + SKYFN +
+    sh.fragmentShader = `uniform sampler2D tNoise;\nuniform vec2 uCloudOff;\nuniform float uCover, uSunVis, uWet, uSunOcc, uDark, uFogSky, uFogNear, uFogFar, uTime;\nuniform vec3 uSunDir, uZen, uHor, uGlow, uSkyFog, uSunCol, uAmb, uHaze, uMtnK;\nvarying vec3 vWp;\nvarying vec3 vWN;\nvarying float vGust;\n#ifdef CLIFF\nvarying vec2 vCl;\n#endif\n` + CLOUD + SKYFN +
       sh.fragmentShader.replace('#include <alphatest_fragment>', `#ifdef CARD
         { vec3 fn = normalize(cross(dFdx(vWp), dFdy(vWp))); vec3 vd = normalize(cameraPosition - vWp); diffuseColor.a *= smoothstep(0.06, 0.32, abs(dot(fn, vd))); }
       #endif
       #include <alphatest_fragment>`).replace('#include <color_fragment>', `#include <color_fragment>
       #ifdef DETAIL
         {
-          // exposed earth with strata on steep banks (cliff)
+          // exposed earth on steep banks: mostly one ochre-brown loam with big soft patches, vertical rain runnels and
+          // lighter wash streaks; layering only faint and only here and there; dark topsoil with roots at the top edge
+          // (cliff), sand-martin burrows in places, a wet dark band at the water
           float steep = 1.0 - smoothstep(0.58, 0.86, normalize(vWN).y);
           steep *= smoothstep(-0.4, 0.2, vWp.y) * (1.0 - smoothstep(9.0, 14.0, vWp.y));
           if (steep > 0.001) {
-            float ny = vWp.y + (texture2D(tNoise, vWp.xz * 0.05).r - 0.5) * 0.9 + (texture2D(tNoise, vWp.xz * 0.6).a - 0.5) * 0.12;
-            float band = sin(ny * 2.4) * 0.5 + 0.5, band2 = sin(ny * 6.3 + 1.7) * 0.5 + 0.5;
-            vec3 loam = vec3(0.36, 0.22, 0.12), sand = vec3(0.62, 0.48, 0.30), clay = vec3(0.52, 0.29, 0.15);
-            vec3 sc = mix(mix(loam, clay, smoothstep(0.35, 0.65, band)), sand, smoothstep(0.62, 0.9, band2) * 0.8);
-            sc *= 0.85 + 0.3 * texture2D(tNoise, vWp.xz * 1.7 + vWp.y).g;
-            sc = mix(sc, vec3(0.16, 0.13, 0.10), 1.0 - smoothstep(0.1, 0.7, vWp.y));
+            float hc = vWp.x * 0.8 + vWp.z * 0.6;
+            float n1 = texture2D(tNoise, vec2(hc * 0.035, vWp.y * 0.05 + 0.13)).r;
+            float n2 = texture2D(tNoise, vec2(hc * 0.13, vWp.y * 0.17 + 0.71)).g;
+            float st = texture2D(tNoise, vec2(hc * 0.85, vWp.y * 0.045 + 0.4)).b;
+            float st2 = texture2D(tNoise, vec2(hc * 2.2, vWp.y * 0.1 + 0.9)).a;
+            vec3 loam = vec3(0.42, 0.27, 0.16), ochre = vec3(0.60, 0.40, 0.22), sandC = vec3(0.70, 0.55, 0.36);
+            vec3 sc = mix(loam, ochre, smoothstep(0.3, 0.7, n1));
+            sc = mix(sc, sandC, smoothstep(0.6, 0.85, n2) * 0.45);
+            float layerMask = smoothstep(0.62, 0.8, texture2D(tNoise, vec2(hc * 0.018, 0.37)).r);
+            float ny = vWp.y + (n1 - 0.5) * 0.7 + (st2 - 0.5) * 0.2;
+            sc *= 1.0 + layerMask * 0.08 * (smoothstep(0.7, 0.95, sin(ny * 3.3) * 0.5 + 0.5) - 0.4);
+            sc *= 0.74 + 0.38 * smoothstep(0.2, 0.85, st);
+            // fake relief: light and shade of vertical ribs and hollows (the face is lit as a whole otherwise)
+            float rA = texture2D(tNoise, vec2(hc * 0.5, vWp.y * 0.018 + 0.21)).r, rB = texture2D(tNoise, vec2(hc * 0.5 + 0.025, vWp.y * 0.018 + 0.21)).r;
+            sc *= 1.0 + clamp((rB - rA) * 5.0, -0.14, 0.14);
+            // thin dark runnels down the face
+            float rn = texture2D(tNoise, vec2(hc * 3.1, vWp.y * 0.07 + 0.55)).r;
+            sc *= 1.0 - 0.28 * smoothstep(0.72, 0.9, rn);
+            sc = mix(sc, sandC * 0.97, smoothstep(0.74, 0.93, st2) * 0.3);
+            sc *= 0.9 + 0.2 * texture2D(tNoise, vWp.xz * 2.1 + vWp.y * 1.3).g;
+            #ifdef CLIFF
+            {
+              float dTop = vCl.x;
+              float soil = (1.0 - smoothstep(0.38 + 0.12 * st2, 0.72 + 0.25 * n2, dTop)) * step(0.5, vCl.y);
+              sc = mix(sc, vec3(0.16, 0.11, 0.075) * (0.85 + 0.3 * n1), soil);
+              float rt = smoothstep(0.86, 0.97, texture2D(tNoise, vec2(hc * 5.5, dTop * 0.35 + 0.2)).r) * (1.0 - smoothstep(0.5, 1.7, dTop)) * step(0.35, dTop);
+              sc = mix(sc, vec3(0.13, 0.095, 0.065), rt * 0.75 * step(0.5, vCl.y));
+              vec2 cp = vec2(hc * 4.0, dTop * 5.5), ci = floor(cp), cf = fract(cp) - 0.5;
+              float rnd = texture2D(tNoise, ci * 0.0713 + 0.31).r;
+              float hole = step(0.8, rnd) * (1.0 - smoothstep(0.16, 0.24, length(cf * vec2(1.0, 1.25))))
+                         * smoothstep(0.45, 0.6, dTop) * (1.0 - smoothstep(1.3, 1.6, dTop)) * smoothstep(0.6, 0.7, texture2D(tNoise, vec2(hc * 0.04, 0.81)).g) * step(0.8, vCl.y);
+              sc = mix(sc, vec3(0.05, 0.035, 0.025), hole);
+            }
+            #endif
+            float wetB = 1.0 - smoothstep(0.12, 0.55 + 0.25 * n2, vWp.y);
+            sc = mix(sc, sc * 0.55, wetB);
+            sc = mix(sc, vec3(0.15, 0.12, 0.095), 1.0 - smoothstep(0.02, 0.25, vWp.y));
             diffuseColor.rgb = mix(diffuseColor.rgb, sc, steep);
           }
         }

@@ -85,7 +85,7 @@ function foliageMats(Q) {
 export function buildWorld(seed, Q) {
   let Hmesh = null;
   let world_bake = () => {}, world_dispose = () => {};
-  const R = rng(seed), N = makeNoise(seed), group = new THREE.Group();
+  let sodGeo = null, Rsrc = rng(seed); const R = () => Rsrc(), N = makeNoise(seed), group = new THREE.Group();
   const meshes = {};
   // ---------- river & island shape ----------
   // river: straight calm reach at the island, then big bends up- and downstream (S-curve)
@@ -101,12 +101,12 @@ export function buildWorld(seed, Q) {
   // ---------- tail bar: sand settles in the calm wake downstream of the island (the current runs toward +x) ----------
   // a tongue of sand from the island's tail along the current, 6-8 m wide at the root, tapering, the end curled a
   // little; a shallow apron around it. Own random stream so the rest of the world keeps its layout.
-  const RB = rng(seed ^ 0x7a11);
+  const RB = rng(seed ^ 0x7a11); let snakeBank = null;
   const TB = (() => {
     const sl = (mz(2) - mz(-2)) / 4, ln = Math.hypot(1, sl), dx = 1 / ln, dz = sl / ln;
     let tx = 0, tz = zc0;
     for (let k = 0; k < 600; k++) { if (islandE(tx, tz) > 0.97) break; tx += dx * 0.1; tz += dz * 0.1; }
-    const L = 16 + RB() * 8, w0 = 3.1 + RB() * 0.8, curl = (RB() < 0.5 ? -1 : 1) * (1.2 + RB() * 1.6), root = 5;
+    const L = 27 + RB() * 6, w0 = 6.2 + RB() * 0.8, curl = (RB() < 0.5 ? -1 : 1) * (1.6 + RB() * 2.0), root = 5;
     return { tx, tz, dx, dz, L, w0, curl, root, ox: tx - dx * root, oz: tz - dz * root, len: L + root };
   })();
   // bar frame: s = 0 at the root (inside the island) .. 1 at the tip; n = signed lateral offset from the (curled) axis
@@ -116,19 +116,26 @@ export function buildWorld(seed, Q) {
     return [s, b - TB.curl * sc * sc, a];
   };
   // metric: < 1 dry sand, 1..2.3 shallow apron, then fades into the river bed
-  const tbHalfW = (s) => TB.w0 * Math.pow(Math.max(0.1, 1 - Math.max(0, s)), 0.62) + 0.35;
+  // a tongue: wide where it leaves the island, narrowing steadily to the tip (no pier-like constant width)
+  const tbHalfW = (s) => TB.w0 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 1.25) + 0.4;
   const tbQ = (x, z) => {
     const [s, n] = tbFrame(x, z);
-    const w = tbHalfW(Math.min(1, s)) * (1 + 0.12 * N.n2(x * 0.21 + 3.3, z * 0.21));
-    const ds = s < 0 ? -s * TB.len / 6 : s > 1 ? (s - 1) * TB.len / 1.6 : 0;
+    // the side on the inside of the curl is gentler and wider
+    const asym = 1 + 0.18 * Math.sign(n * TB.curl);
+    const w = tbHalfW(Math.min(1, s)) * asym * (1 + 0.14 * N.n2(x * 0.17 + 3.3, z * 0.17) + 0.06 * N.n2(x * 0.6, z * 0.6 + 2.2));
+    const ds = s < 0 ? -s * TB.len / 6 : s > 1 ? (s - 1) * TB.len / 2.2 : 0;
     return Math.hypot((n + 0.35 * N.n2(x * 0.33, z * 0.33 + 1.7)) / w, ds);
   };
   const tbHeight = (x, z) => {
     const q = tbQ(x, z), [s] = tbFrame(x, z);
-    if (q > 3.4) return -99;
-    const crest = 0.12 + 0.3 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 0.6) + 0.04 * N.n2(x * 0.4, z * 0.4);
-    if (q < 1) return crest * (1 - q * q) + 0.015 * N.n2(x * 1.3, z * 1.3);
-    return -0.52 * sm(1, 2.1, q) - 2.6 * sm(2.2, 3.4, q);
+    if (q > 3.4 && tbFrame(x, z)[0] < 1) return -99;
+    const crest = 0.1 + 0.34 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 0.9) + 0.04 * N.n2(x * 0.4, z * 0.4);
+    const hDry = q < 1 ? crest * (1 - q * q) + 0.015 * N.n2(x * 1.3, z * 1.3) : -0.52 * sm(1, 2.1, q) - 2.6 * sm(2.2, 3.4, q);
+    // the bar goes on under water past its tip as a shoal ~10 m long
+    const [s1, n1] = tbFrame(x, z), wa = Math.max(tbHalfW(Math.min(1, Math.max(0, s1))) * 1.6, 2.4);
+    const qa = Math.hypot(n1 / wa, s1 > 1 ? (s1 - 1) * TB.len / 10 : s1 < 0 ? -s1 * TB.len / 4 : 0);
+    const hA = qa > 1.8 ? -99 : -0.3 - 0.35 * sm(0.3, 1, qa) - 2.5 * sm(1, 1.8, qa);
+    return Math.max(hDry, hA);
   };
   U.uLee.value.set(TB.ox, TB.oz, TB.dx, TB.dz); U.uLeeS.value.set(TB.len, TB.w0, TB.curl);
   const onBar = (x, z, m = 1.5) => tbQ(x, z) < m && tbFrame(x, z)[0] > 0.22;
@@ -138,7 +145,12 @@ export function buildWorld(seed, Q) {
   const sbX = 70 + R() * 25, sbSide = SG, sbL = 30 + R() * 10, sbW = 8 + R() * 3;
   const cliffFall = (x) => sm(cxa, cxa + 20, x) * (1 - sm(cxb - 20, cxb, x));
   const cliffTop = (x) => 0.6 + (4.8 + 1.6 * N.n2(x * 0.05, 3.3) + 0.4 * N.n2(x * 0.13, 1.7)) * cliffFall(x);
-  const cliffOff = (x) => 3.4 + 1.4 * N.n2(x * 0.07, 5.5) + 0.35 * N.n2(x * 0.17, 2.1);
+  // narrow erosion gullies cut back into the edge (own random stream: the rest of the world keeps its layout)
+  const RC = rng(seed ^ 0x3c1f), gullies = [];
+  for (let k = 0; k < 6; k++) { const gx = cxa + 18 + (cliffL - 36) * (k + 0.2 + RC() * 0.6) / 6; gullies.push([gx, 0.45 + RC() * 0.6, 1.2 + RC() * 1.6]); }
+  const gully = (x, wk = 1) => { let g = 0; for (const [gx, gw, gd] of gullies) g = Math.max(g, gd * Math.exp(-(((x - gx) / (gw * wk)) ** 2))); return g; };
+  // the edge line: bays and buttresses of 5-15 m, smaller bites, and the gullies
+  const cliffOff = (x) => 3.4 + 1.4 * N.n2(x * 0.07, 5.5) + 1.3 * N.n2(x * 0.13, 9.1) + 0.45 * N.n2(x * 0.37, 2.1) + 0.22 * N.n2(x * 1.3, 6.6) + 0.1 * N.n2(x * 3.1, 8.8) + gully(x);
   const hwAt = (x) => HW + 6 * N.n2(x * 0.006, 7.7) + 2.5 * N.n2(x * 0.03, 1.1);
   const sbC = () => [sbX, mz(sbX) + sbSide * (hwAt(sbX) - sbW * 0.55)];
   function H(x, z) {
@@ -155,9 +167,14 @@ export function buildWorld(seed, Q) {
     if (x > cxa && x < cxb && Math.sign(z - zc) === cliffSide) {
       const f = cliffFall(x);
       if (f > 0) {
-        const d0 = hw + cliffOff(x), wd = 0.6 + (1 - f) * 3.5, T = cliffTop(x);
-        const talus = 0.35 * sm(hw - 0.5, d0 - wd, d) * (1 - sm(d0 - wd, d0, d));
-        const target = Math.max(h, 0.15 + talus) + (T + Math.max(0, d - d0 - wd) * 0.015 - Math.max(h, 0.15 + talus)) * sm(d0 - wd, d0 + wd, d);
+        const d0 = hw + cliffOff(x), wd = 0.75 + (1 - f) * 3.2, T = cliffTop(x);
+        // fallen sand at the foot, heaped into cones below the gullies
+        const cone = gully(x, 2.2) / 2.8, tal = 0.3 + 1.1 * cone, tw = 1.2 + 2.2 * cone;
+        const talus = tal * sm(d0 - wd - tw, d0 - wd, d) * (1 - sm(d0 - wd, d0, d)) + 0.12 * sm(hw - 0.5, d0 - wd - tw, d);
+        // the face profile: steep but uneven up its height (small ledges, bulges and hollows)
+        const u = Math.max(0, Math.min(1, (d - (d0 - wd)) / (2 * wd)));
+        const prof = Math.max(0, Math.min(1, sm(0, 1, u) + 0.16 * N.n2(x * 0.9, u * 4.3 + 2.2) * 4 * u * (1 - u)));
+        const target = Math.max(h, 0.15 + talus) + (T + Math.max(0, d - d0 - wd) * 0.015 - Math.max(h, 0.15 + talus)) * prof;
         h = Math.max(h, h + (target - h) * f * sm(hw - 1.5, hw - 0.3, d));
       }
     }
@@ -193,9 +210,11 @@ export function buildWorld(seed, Q) {
   const terrainColor = (x, z, h) => {
     const sl = Math.min(1, (Math.abs(H(x + 1, z) - h) + Math.abs(H(x, z + 1) - h)) * 0.9);
     const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z);
-    if (h < -1.2) tmp.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h));
+    const onTB = h < 0.5 && tbFrame(x, z)[0] > 0.25 && tbHeight(x, z) > -0.9;
+    if (onTB && h < 0.15) tmp.copy(cSand).multiplyScalar(0.92).lerp(cWet, sm(0.15, -0.1, h) * 0.75).lerp(cBed, sm(-0.3, -0.9, h) * 0.6); // sandy shoal round the tail bar
+    else if (h < -1.2) tmp.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h));
     else if (h < -0.15) tmp.copy(cWet).lerp(cBed, sm(-0.15, -1.2, h));
-    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8 || (tbQ(x, z) < 1.25 && tbFrame(x, z)[0] > 0.3)) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
+    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8 || (tbQ(x, z) < 2.3 && tbFrame(x, z)[0] > 0.28)) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
     else {
       tmp.copy(cGrass).lerp(nz > 0 ? cGrass2 : cGrass3, Math.abs(nz) * 0.8);
       tmp.lerp(cDirt, sm(0.35, 0.8, sl) * 0.8);
@@ -233,10 +252,10 @@ export function buildWorld(seed, Q) {
   terrain.receiveShadow = true; group.add(terrain);
   // fine-grid patch for the cliff bank (0.6 m), main terrain is tucked below it
   {
-    const step = 0.6, x0 = cxa - 5, x1 = cxb + 5, nx = Math.ceil((x1 - x0) / step), nzr = Math.ceil(28 / step), A = nx + 1, pos = [], col = [], idx = [];
+    const step = 0.4, x0 = cxa - 5, x1 = cxb + 5, nx = Math.ceil((x1 - x0) / step), nzr = Math.ceil(28 / step), A = nx + 1, pos = [], col = [], idx = [], cl = [];
     for (let j = 0; j <= nzr; j++) for (let i = 0; i <= nx; i++) {
       const x = x0 + i * step, dd = hwAt(x) - 6 + j * step, z = mz(x) + cliffSide * dd, h = H(x, z);
-      pos.push(x, h, z); const c = terrainColor(x, z, h); col.push(c.r, c.g, c.b);
+      pos.push(x, h, z); const c = terrainColor(x, z, h); col.push(c.r, c.g, c.b); cl.push(Math.max(0, cliffTop(x) - h), cliffFall(x));
     }
     for (let j = 0; j < nzr; j++) for (let i = 0; i < nx; i++) {
       const a0 = j * A + i;
@@ -245,8 +264,9 @@ export function buildWorld(seed, Q) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1));
+    g.setAttribute('aCl', new THREE.Float32BufferAttribute(cl, 2));
     g.setIndex(idx); g.computeVertexNormals();
-    const m = new THREE.Mesh(g, terrainMat); m.receiveShadow = true; group.add(m);
+    const m = new THREE.Mesh(g, patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'terrain', 0, { DETAIL: '', CLIFF: '' })); m.receiveShadow = true; group.add(m);
   }
 
   // ---------- mountains: polar height grid, eroded to natural slopes ----------
@@ -388,7 +408,7 @@ export function buildWorld(seed, Q) {
   const V3 = THREE.Vector3, _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _bx = new V3(), _by = new V3(), _bz = new V3();
   // species: trunk height, crown envelope, growth parameters
   const SPEC = {
-    birch: { h: [9, 11.5], rBase: 0.2, trunkF: 0.9, wob: 0.05, step: 0.32, di: 1.7, dk: 0.45, nPts: 750, persist: 0.6, kink: 0.12, elbowP: 0.15, elbow: 0.3, maxKids: 3, rTip: 0.007, flare: 0.45, flareK: 0.45, irr: 0.06,
+    birch: { h: [9, 11.5], rBase: 0.145, trunkF: 0.9, wob: 0.05, step: 0.32, di: 1.7, dk: 0.45, nPts: 750, persist: 0.6, kink: 0.12, elbowP: 0.15, elbow: 0.3, maxKids: 3, rTip: 0.007, flare: 0.45, flareK: 0.45, irr: 0.06,
       env: (x, y, z, h) => { const dy = (y - h * 0.64) / (h * 0.33), rr = h * (0.17 + 0.05 * N.n2(x * 0.5 + 3, z * 0.5)); return y > h * 0.34 && (x * x + z * z) / (rr * rr) + dy * dy < 1; },
       trop: (n) => new V3(0, n.out < 1.0 ? 0.35 : 0.35 - 0.7 * Math.min(1, (n.out - 1.0) / 1.6), 0) },
     oak: { h: [8, 10], rBase: 0.36, trunkF: 0.3, wob: 0.1, step: 0.42, di: 2.5, dk: 0.65, nPts: 950, persist: 0.5, kink: 0.18, elbowP: 0.28, elbow: 0.5, maxKids: 3, rTip: 0.009, flare: 0.6, flareK: 0.75, irr: 0.13,
@@ -462,10 +482,10 @@ export function buildWorld(seed, Q) {
       nd.kids = []; nd.broken = true; c++;
     }
   }
-  function tree(x, z, kind) {
+  function tree(x, z, kind, leanO, leafK = 1) {
     const g0 = H(x, z), base = new V3(x, g0 - 0.3, z);
     const la = R() * Math.PI * 2, lt = kind === 'willow' ? 0.12 + R() * 0.12 : kind === 'dead' ? 0.1 + R() * 0.15 : 0.05 * R();
-    const lean = new V3(Math.sin(lt) * Math.cos(la), Math.cos(lt), Math.sin(lt) * Math.sin(la)).normalize();
+    const lean = leanO ? leanO.clone().normalize() : new V3(Math.sin(lt) * Math.cos(la), Math.cos(lt), Math.sin(lt) * Math.sin(la)).normalize();
     const { nodes, height, S } = skeleton(kind, base, lean);
     if (kind === 'dead') breakLimbs(nodes, 4 + Math.floor(R() * 3));
     pipeRadii(nodes, S.rTip, S.rBase);
@@ -515,7 +535,7 @@ export function buildWorld(seed, Q) {
       if (R() < 0.04 && kind !== 'willow') c.lerp(C('#b8a640'), 0.6);
       leafInst[kind].push([_m4.clone(), c]);
     };
-    const total = Q.leaves * (kind === 'birch' ? 1.7 : kind === 'willow' ? 4.2 : 2.3);
+    const total = Q.leaves * leafK * (kind === 'birch' ? 1.7 : kind === 'willow' ? 4.2 : 2.3);
     // weight outer nodes higher (the inside of a crown is shaded and bare)
     const wOf = (nd) => 0.25 + Math.pow(Math.min(1, nd.p.distanceTo(cc) / crad), 2);
     const cum = []; let wsum = 0; for (const nd of lnodes) { wsum += wOf(nd); cum.push(wsum); }
@@ -631,6 +651,105 @@ export function buildWorld(seed, Q) {
       let x = sx - sbL * 0.25, z = sz;
       for (let k = 0; k < 60; k++) { if (H(x, z) < -0.15) break; z += dz * 0.3; }
       snag(x - 0.5, z - dz * 1.2, sbSide * Math.PI / 2 + (R() - 0.5) * 0.6);
+    }
+    // ---------- the cliff: trees at the edge, a fallen one, roots, the overhanging sod, slumped blocks, driftwood ----------
+    {
+      const Rkeep = Rsrc; Rsrc = RC; // own random stream: the rest of the world keeps its layout
+      const out = new V3(0, 0, -cliffSide); // toward the water
+      const edge = (x) => { const d0 = hwAt(x) + cliffOff(x), z = mz(x) + cliffSide * d0; return { x, z, d0, T: H(x, mz(x) + cliffSide * (d0 + 0.8)) }; };
+      const at = (x, dd) => [x, mz(x) + cliffSide * dd];
+      const cRoot = C('#4a3a2c'), cRoot2 = C('#6b5640'), cHum = C('#4a3828'), cSodG = C('#56682f'), cLoam = C('#7d5a3a'), cDwC = C('#8e8474');
+      // trees and bushes right at the edge, one leaning out
+      const treeXs = [cliffX - 30 + R() * 8, cliffX + 4 + R() * 8, cliffX + 28 + R() * 6];
+      treeXs.forEach((tx, k) => {
+        if (gully(tx) > 0.3) tx += 3;
+        const e = edge(tx), [x, z] = at(tx, e.d0 + 1.0 + R() * 0.6);
+        const lean = k === 1 ? new V3(out.x * 0.35, 1, out.z * 0.35) : null;
+        tree(x, z, k === 2 ? 'oak' : 'birch', lean, 0.5);
+        // its roots laid bare by the falling face, hanging down the wall
+        for (let j = 0; j < 7; j++) {
+          const xx = tx + (R() - 0.5) * 2.2, ee = edge(xx), y0 = ee.T - 0.15 - R() * 0.3;
+          const p0 = new V3(xx, y0, mz(xx) + cliffSide * (ee.d0 + 0.15));
+          const p1 = new V3(xx + (R() - 0.5) * 0.4, y0 - 0.4 - R() * 1.1, mz(xx) + cliffSide * (ee.d0 - 0.12 - R() * 0.25));
+          trunkAcc.add(limbGeo(p0, p1, 0.025 + R() * 0.03, 0.006, 4, 2), () => (R() < 0.5 ? cRoot : cRoot2), () => 0);
+        }
+      });
+      { // a birch that went down with a slump: its root plate torn up on the edge, the trunk down the face into the water
+        let fx = cliffX - 8 + R() * 10; if (gully(fx) > 0.3) fx += 3;
+        const e = edge(fx), [x, z] = at(fx, e.d0 + 0.3), base = new V3(x, e.T + 0.25, z);
+        const [tx2, tz2] = at(fx + 3.5, e.d0 - 8.5), tip = new V3(tx2, -0.25, tz2), mid = base.clone().lerp(tip, 0.45); mid.y += 0.5;
+        const cB = C('#d9d6cc'), cBd = C('#2d2a26');
+        const birchC = (v) => tmp.copy(cB).lerp(cBd, smoothNoise(v) > 0.55 ? 0.85 : 0.05).multiplyScalar(0.8 + 0.2 * N.n2(v.x * 3, v.z * 3));
+        function smoothNoise(v) { return N.n2(v.x * 2.3 + v.y * 9, v.z * 2.3) * 0.5 + 0.5; }
+        woodLimb(base, mid, 0.24, 0.19, 10, 3, birchC, 0.1); woodLimb(mid, tip, 0.19, 0.07, 9, 3, birchC, 0.1);
+        // bare branches, broken short on the underside
+        for (let j = 0; j < 15; j++) {
+          const t0 = 0.28 + j * 0.047, p0 = base.clone().lerp(tip, t0); p0.y += Math.sin(t0 * Math.PI) * 0.45;
+          const a = R() * 6.28, up = R() < 0.65, ln = (up ? 1.4 + R() * 1.8 : 0.3 + R() * 0.4) * (1 - t0 * 0.45);
+          const p1 = p0.clone().add(new V3(Math.cos(a) * ln * 0.7, up ? ln * 0.7 : -ln * 0.3, Math.sin(a) * ln * 0.7));
+          woodLimb(p0, p1, 0.065 * (1 - t0 * 0.5), 0.014, 5, 2, () => tmp.copy(cDwC).multiplyScalar(0.75), 0.2);
+          if (up && R() < 0.7) { const m = p0.clone().lerp(p1, 0.6); woodLimb(m, m.clone().add(new V3((R() - 0.5) * 0.8, 0.3 + R() * 0.4, (R() - 0.5) * 0.8)), 0.018, 0.005, 4, 1, () => cDwC, 0.2); }
+        }
+        // the root plate standing up on the edge, earth still in it
+        trunkAcc.add(blobGeo(N, base.clone().add(new V3(-out.x * 0.15, 0.25, -out.z * 0.15)), 0.75, 0.75, 1, 0.45), (v, n) => tmp.copy(n.y > 0.6 ? cHum : cLoam).multiplyScalar(0.75 + 0.3 * N.n2(v.x * 4, v.z * 4)), () => 0);
+        for (let j = 0; j < 9; j++) { const a = j * 0.7 + R() * 0.4, p0 = base.clone().add(new V3(0, 0.2, 0)), p1 = p0.clone().add(new V3(Math.cos(a) * (0.6 + R() * 0.5), 0.1 + R() * 0.8, Math.sin(a) * (0.6 + R() * 0.5)));
+          trunkAcc.add(limbGeo(p0, p1, 0.045, 0.01, 4, 2), () => cRoot, () => 0); }
+        trunks.push([x, z, 0.5]);
+      }
+      // the overhanging sod along the top edge: a mat of turf 12-20 cm thick, sticking out 15-45 cm and sagging,
+      // torn at the gullies and here and there; roots and rootlets hang from under it
+      {
+        const pos = [], col = [];
+        const quad = (a, b, c, d, nWant, ca, cb) => {
+          const n = new V3().subVectors(b, a).cross(new V3().subVectors(d, a));
+          const tri = n.dot(nWant) >= 0 ? [a, b, c, a, c, d] : [a, c, b, a, d, c];
+          for (const v of tri) { pos.push(v.x, v.y, v.z); const cc = (v === a || v === d) ? ca : cb; col.push(cc.r, cc.g, cc.b); }
+        };
+        let prev = null;
+        for (let x = cxa + 10; x <= cxb - 10; x += 0.35) {
+          const f = cliffFall(x), torn = gully(x) > 0.1 || N.n2(x * 0.21, 4.4) < -0.45;
+          if (f < 0.55 || torn) { prev = null; continue; }
+          const e = edge(x), ov = 0.15 + 0.3 * (N.n2(x * 0.3, 7.7) * 0.5 + 0.5), th = 0.12 + 0.08 * (N.n2(x * 0.5, 1.9) * 0.5 + 0.5), sag = 0.05 + 0.12 * (N.n2(x * 0.4, 3.3) * 0.5 + 0.5);
+          const pz = (dd) => mz(x) + cliffSide * dd;
+          const A = new V3(x, e.T + 0.02, pz(e.d0 + 0.6)), B = new V3(x, e.T - sag, pz(e.d0 - ov)), Cc = new V3(x, e.T - sag - th, pz(e.d0 - ov + 0.04)), D = new V3(x, e.T - th - 0.1, pz(e.d0 + 0.25));
+          const cur = { A, B, C: Cc, D, T: e.T, d0: e.d0 };
+          if (prev && (Math.abs(prev.T - e.T) > 0.2 || Math.abs(prev.d0 - e.d0) > 0.3)) prev = null; // a step in the edge: the turf is torn there
+          if (prev) {
+            const g1 = tmp.copy(cSodG).multiplyScalar(0.85 + 0.3 * N.n2(x * 2, 1)).clone();
+            quad(prev.A, cur.A, cur.B, prev.B, new V3(0, 1, 0), g1, g1);
+            quad(prev.B, cur.B, cur.C, prev.C, out, cHum, cHum);
+            quad(prev.C, cur.C, cur.D, prev.D, new V3(0, -1, 0), cHum, cHum);
+            // rootlets hanging from the underside
+            if (R() < 0.55) { const p0 = cur.C.clone().lerp(cur.D, R() * 0.6), ln = 0.15 + R() * 0.6;
+              trunkAcc.add(limbGeo(p0, p0.clone().add(new V3((R() - 0.5) * 0.15, -ln, out.z * 0.05 * R())), 0.008 + R() * 0.012, 0.002, 3, 2), () => (R() < 0.6 ? cRoot : cRoot2), () => 0); }
+          }
+          prev = cur;
+        }
+        const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        g.setAttribute('sway', new THREE.Float32BufferAttribute(new Float32Array(pos.length / 3), 1)); g.computeVertexNormals();
+        sodGeo = g; // meshed once the bark material exists
+      }
+      // slumped blocks of earth at the foot (some with their turf still on top), a few in the water
+      for (let k = 0, made = 0; k < 80 && made < 9; k++) {
+        const x = cxa + 14 + R() * (cliffL - 28); if (cliffFall(x) < 0.6) continue;
+        const e = edge(x), r = 0.35 + R() * 0.55, dd = e.d0 - 1.1 - r * 0.6 - R() * (made < 3 ? 4.5 : 2.0), [bx, bz] = at(x, dd), h = H(bx, bz);
+        if (h > 1.2) continue; // must lie at the foot, not on the face
+        if (rockList.some(([rx, rz, rr]) => Math.hypot(rx - bx, rz - bz) < rr + r)) continue;
+        const turf = R() < 0.4, tilt = R();
+        rockAcc.add(blobGeo(N, new V3(bx, Math.max(h, -0.6) + r * 0.1, bz), r, 0.55 + 0.2 * R(), 1, 0.42), (v, n) => {
+          const up = n.y > 0.45 + tilt * 0.3;
+          return tmp.copy(turf && up ? cSodG : cLoam).multiplyScalar(0.75 + 0.35 * N.n2(v.x * 3, v.z * 3 + v.y * 5)).lerp(cHum, turf && n.y > 0.1 && !up ? 0.5 : 0);
+        }, () => 0);
+        rockList.push([bx, bz, r * 1.1]); made++;
+      }
+      // driftwood at the foot
+      for (let k = 0; k < 2; k++) {
+        const x = cliffX - 20 + k * 30 + R() * 10, e = edge(x), [x0, z0] = at(x, e.d0 - 2.2 - R()), [x1, z1] = at(x + 2.5 + R() * 1.5, e.d0 - 3.5 - R() * 1.5);
+        const r = 0.12 + R() * 0.08, p0 = new V3(x0, Math.max(H(x0, z0), -0.15) + r * 0.7, z0), p1 = new V3(x1, Math.max(H(x1, z1), -0.2) + r * 0.5, z1);
+        woodLimb(p0, p1, r, r * 0.6, 7, 2, (v) => tmp.copy(cDwC).multiplyScalar(0.7 + 0.3 * N.n2(v.x * 5, v.z * 5)));
+        for (let j = 0; j < 4; j++) { const a = R() * 6.28; woodLimb(p0, p0.clone().add(new V3(Math.cos(a) * 0.45, (R() - 0.3) * 0.3, Math.sin(a) * 0.45)), r * 0.45, r * 0.1, 5, 1, () => cDwC); }
+      }
+      Rsrc = Rkeep;
     }
     for (const bt of ['rough', 'birch']) {
       if (!barkAcc[bt].p.length) continue;
@@ -770,6 +889,26 @@ export function buildWorld(seed, Q) {
         const m = p0.clone().lerp(p1, 0.5); woodLimb(m, m.clone().add(new THREE.Vector3((RB() - 0.5) * 0.6, 0.1 + RB() * 0.15, (RB() - 0.5) * 0.6)), r * 0.5, r * 0.2, 4, 1, () => cDw);
       }
     }
+    { // the bank grass snake's home: an old log, a stump with its roots and a little heap of stones by the water
+      const side = RB() < 0.5 ? -1 : 1, bx = -10 - RB() * 18; snakeBank = { x: bx, side };
+      const bp = (x, dd) => { const z = mz(x) + side * (hwAt(x) + dd); return [x, z, H(x, z)]; };
+      { const [x0, z0, h0] = bp(bx - 1.4, 2.6), [x1, z1, h1] = bp(bx + 1.3, 2.9), r = 0.17;
+        const p0 = new THREE.Vector3(x0, h0 + r * 0.7, z0), p1 = new THREE.Vector3(x1, h1 + r * 0.55, z1);
+        const logC = (v) => tmp.copy(cDw2).lerp(cDw, 0.4).multiplyScalar(0.7 + 0.3 * N.n2(v.x * 5, v.z * 5 + v.y * 9));
+        woodLimb(p0, p1, r, r * 0.8, 8, 3, logC);
+        const m = p0.clone().lerp(p1, 0.6); woodLimb(m, m.clone().add(new THREE.Vector3(0.25, 0.28, side * 0.3)), r * 0.35, r * 0.15, 5, 1, logC);
+        trunks.push([(x0 + x1) / 2, (z0 + z1) / 2, 0.35, 'log']); }
+      { const [x, z, h] = bp(bx + 4.5, 4.2), r = 0.24, top = new THREE.Vector3(x, h + 0.42, z);
+        const stC = (v) => tmp.copy(cDw2).multiplyScalar(0.62 + 0.2 * N.n2(v.y * 30, v.x * 7));
+        woodLimb(new THREE.Vector3(x, h - 0.1, z), top, r * 1.15, r, 9, 2, stC, 0.1);
+        for (let k = 0; k < 5; k++) { const a = k * 1.256 + RB() * 0.5, ln = 0.35 + RB() * 0.3, s0 = new THREE.Vector3(x + Math.cos(a) * r * 0.8, h + 0.08, z + Math.sin(a) * r * 0.8);
+          woodLimb(s0, new THREE.Vector3(x + Math.cos(a) * (r + ln), H(x + Math.cos(a) * (r + ln), z + Math.sin(a) * (r + ln)) - 0.03, z + Math.sin(a) * (r + ln)), r * 0.35, r * 0.1, 5, 1, stC); }
+        trunks.push([x, z, r + 0.1, 'stump']); }
+      { const [x, z] = bp(bx - 5, 0.9);
+        for (let k = 0; k < 5; k++) { const rr = 0.14 + RB() * 0.2, xx = x + (RB() - 0.5) * 0.9, zz = z + (RB() - 0.5) * 0.7, hh = H(xx, zz);
+          rockAcc.add(rockGeo(new THREE.Vector3(xx, hh + rr * (k < 3 ? 0.2 : 0.55), zz), rr, 0.55, RB), rockCol(RB() < 0.5 ? C('#8f887c') : C('#6d675f')), () => 0); rockList.push([xx, zz, rr * 1.2]); }
+        trunks.push([x, z, 0.45, 'stones']); }
+    }
     const fx = -60 - R() * 40, fside = -SG, zc = mz(fx), hw = hwAt(fx);
     const base = new THREE.Vector3(fx - 2, 0, zc + fside * (hw + 5)); base.y = H(base.x, base.z) + 0.2;
     const tip = new THREE.Vector3(fx + 5, -0.45, zc + fside * (hw - 7));
@@ -795,6 +934,7 @@ export function buildWorld(seed, Q) {
   const barkMat = patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'bark', 0.32);
   const addAcc = (acc, mat, cast = true) => { if (!acc.p.length) return; const m = new THREE.Mesh(acc.build(), mat); m.castShadow = cast; m.receiveShadow = true; group.add(m); };
   addAcc(trunkAcc, barkMat); addAcc(leafAcc, leafMat); addAcc(bushAcc, leafMat); addAcc(rockAcc, barkMat);
+  if (sodGeo) { const m = new THREE.Mesh(sodGeo, barkMat); m.castShadow = true; m.receiveShadow = true; group.add(m); }
   const folMat = FM.mk('foliage', 0.32), bushMat = FM.mk('bushfol', 0.32);
   for (const [acc, mat] of [[cardAcc, folMat], [bushCards, bushMat]]) {
     if (!acc.p.length) continue;
@@ -1014,7 +1154,7 @@ export function buildWorld(seed, Q) {
         let x, z;
         if (near) { const u = (R() * 2 - 1) * irx * 1.5, v = (R() * 2 - 1) * irz * 1.6; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
         else { x = (R() * 2 - 1) * 200; z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) - 1 - R() * 9); }
-        const h = H(x, z); if (h > -0.14 || h < -0.75 || onBar(x, z, 2.0)) continue;
+        const h = H(x, z); if (h > -0.14 || h < -0.75 || onBar(x, z, 2.8)) continue;
         if (N.n2(x * 0.25, z * 0.25) < -0.2) continue;
         const L = -h * (0.6 + R() * 0.33);
         d.position.set(x, h, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(0.8 + R() * 0.8, L, 1);
@@ -1401,7 +1541,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { bar: Object.assign({ q: tbQ, frame: tbFrame, halfW: tbHalfW }, TB), bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, Hmesh, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
+  return { snakeBank, bar: Object.assign({ q: tbQ, frame: tbFrame, halfW: tbHalfW }, TB), bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, Hmesh, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {

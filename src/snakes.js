@@ -10,7 +10,9 @@ const V = THREE.Vector3;
 const NODES = 56, RAD = 12;
 
 export function createSnakes(world, Q, scene) {
-  const R = rng(4242), { H, islandE, zc0, mz, hwAt } = world;
+  const R = rng(4242), { H, zc0, mz, hwAt } = world;
+  // the island snakes' home area: the island and its whole tail bar with the shallows round it
+  const islandE = (x, z) => Math.min(world.islandE(x, z), world.bar ? 0.6 + 0.35 * world.bar.q(x, z) : 9);
   const sm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
   const obst = world.trunks.map((t) => [t[0], t[1], t[2]]).concat(world.rockList || []);
 
@@ -119,7 +121,8 @@ export function createSnakes(world, Q, scene) {
   const islandPt = (emin, emax, hmax = 99) => { for (let t = 0; t < 400; t++) { const x = (R() * 2 - 1) * 28, z = zc0 + (R() * 2 - 1) * 20, e = islandE(x, z), h = H(x, z); if (e > emin && e < emax && h > 0.12 && h < hmax) return new V(x, 0, z); } return hmax < 99 ? islandPt(emin, emax) : new V(0, 0, zc0); };
   const islandWater = () => { for (let t = 0; t < 300; t++) { const x = (R() * 2 - 1) * 32, z = zc0 + (R() * 2 - 1) * 24, h = H(x, z); if (h < -0.25 && h > -1.6 && islandE(x, z) < 1.45) return new V(x, 0, z); } return new V(0, 0, zc0 + 16); };
   // the bank snake: a stretch of the mainland shore opposite the island
-  const bankX = (R() - 0.5) * 50, bankSide = R() < 0.5 ? -1 : 1;
+  const bx0 = (R() - 0.5) * 50, bs0 = R() < 0.5 ? -1 : 1; // (draws kept so the rest of the snakes' randomness is unchanged)
+  const bankX = world.snakeBank ? world.snakeBank.x : bx0, bankSide = world.snakeBank ? world.snakeBank.side : bs0;
   const bankPt = (wet) => {
     for (let t = 0; t < 300; t++) {
       const x = bankX + (R() - 0.5) * 30, z = mz(x) + bankSide * (hwAt(x) + (wet ? -2 - R() * 4 : 0.5 + R() * 5)), h = H(x, z);
@@ -261,6 +264,36 @@ export function createSnakes(world, Q, scene) {
     for (; i < NODES; i++) out[i].copy(out[i - 1]);
   };
   const snkU = U.uSnk.value, snkB = U.uSnB.value;
+  // ---- night shelters: tree roots, big stones, driftwood, dense reeds at the water's edge ----
+  const shelters = [];
+  for (const t of world.trunks) { const [x, z, r, kind] = t, h = Hg(x, z); if (h < -0.02) continue; shelters.push({ x, z, R: Math.min(0.9, r + (kind ? 0.3 : 0.25)), kind: kind ? 'roots' : 'stone' }); }
+  for (const [x, z, r] of (world.rockList || [])) { if (r < 0.25 || r > 1.6 || Hg(x, z) < -0.02) continue; if (shelters.some((q) => Math.hypot(q.x - x, q.z - z) < 0.6)) continue; shelters.push({ x, z, R: Math.min(0.9, r * 0.85 + 0.15), kind: 'stone' }); }
+  for (let i = 0; i < world.reedPts.length; i += 3) { const p = world.reedPts[i], h = Hg(p.x, p.z); if (h < -0.08 || h > 0.3) continue; shelters.push({ x: p.x, z: p.z, R: 0.45, kind: 'reeds' }); }
+  const inZone = (s, x, z) => s.bank ? Math.abs(x - bankX) < 22 && (z - mz(x)) * bankSide > hwAt(x) - 3 && Hg(x, z) > -0.1 : islandE(x, z) < 1.4;
+  function pickShelter(s) {
+    const used = snakes.filter((o) => o !== s && o.shel).map((o) => o.shel);
+    const c = shelters.filter((q) => inZone(s, q.x, q.z) && !used.includes(q)).map((q) => [q, Math.hypot(q.x - s.hd.x, q.z - s.hd.z)]).sort((a, b) => a[1] - b[1]).slice(0, 3);
+    if (!c.length) { const g = s.bank ? bankPt(false) : islandPt(0.4, 0.85); return { x: g.x, z: g.z, R: 0.4, kind: 'ground' }; }
+    return c[Math.floor(R() * c.length)][0];
+  }
+  // a path the head follows exactly: in to the middle of the shelter, then coiled up tightly underneath it
+  function enterPath(s, q) {
+    const pts = [], dx = q.x - s.hd.x, dz = q.z - s.hd.z, d = Math.hypot(dx, dz) || 1;
+    // crawling in with the usual S-bends, flattening out as the head slips under
+    const lam = 0.42 * s.L, nx = -dz / d, nz = dx / d;
+    for (let u = 0.06; u <= d; u += 0.06) { const w = 0.1 * Math.sin(2 * Math.PI * u / lam) * Math.min(1, (d - u) / 0.5); pts.push([s.hd.x + dx / d * u + nx * w, s.hd.z + dz / d * u + nz * w]); }
+    let a = Math.atan2(dz, dx) - Math.PI / 2, len = 0; const rad = Math.min(0.2, q.R * 0.45);
+    while (len < s.L + 0.4) { const rr = rad * (0.6 + 0.4 * Math.max(0, 1 - len / (s.L + 0.4))); a += 0.08 / rr; pts.push([q.x + Math.cos(a) * rr, q.z + Math.sin(a) * rr]); len += 0.08; }
+    return pts;
+  }
+  // out again: from inside straight out across the edge and on for a body length
+  function emergePath(s, q) {
+    const pts = []; let a = R() * 6.28;
+    for (let t = 0; t < 12; t++) { const ex = q.x + Math.cos(a) * (q.R + s.L + 0.5), ez = q.z + Math.sin(a) * (q.R + s.L + 0.5); if (Hg(ex, ez) > -0.05 && inZone(s, ex, ez)) break; a = R() * 6.28; }
+    const lam = 0.42 * s.L, nx = -Math.sin(a), nz = Math.cos(a);
+    for (let u = 0.06; u <= q.R + s.L + 0.5; u += 0.06) { const w = 0.1 * Math.sin(2 * Math.PI * u / lam) * Math.min(1, u / 0.5); pts.push([q.x + Math.cos(a) * u + nx * w, q.z + Math.sin(a) * u + nz * w]); }
+    return pts;
+  }
   const startLurk = (s) => { s.state = 'pose'; s.lurk = true; s.slowT = 0; s.poseKind = R() < 0.65 ? 'flat' : 'ring'; s.pose = posePath(s, s.poseKind); s.poseI = 0; };
 
   function update(dt, t, env) {
@@ -269,11 +302,21 @@ export function createSnakes(world, Q, scene) {
     for (let k = 0; k < snakes.length; k++) {
       const s = snakes[k];
       const wantHide = night || wetW;
-      if (wantHide && s.state !== 'hide' && s.state !== 'hidden') { s.state = 'hide'; s.pose = null; s.goal = s.bank ? bankPt(false) : islandPt(0.4, 0.85); }
-      if (!wantHide && (s.state === 'hide' || s.state === 'hidden')) { s.hidden = Math.max(0, s.hidden - dt * 0.3); if (s.hidden <= 0) { s.state = 'crawl'; pickGoal(s, env); } }
+      const inOut = s.state === 'pose' && (s.enter || s.emerge);
+      if (wantHide && s.state !== 'hide' && s.state !== 'hidden' && !inOut) {
+        s.state = 'hide'; s.pose = null; s.dv = null; s.hdY = 0; s.shel = pickShelter(s); s.hideT = 0;
+        const dx = s.hd.x - s.shel.x, dz = s.hd.z - s.shel.z, d = Math.hypot(dx, dz) || 1;
+        s.goal = new V(s.shel.x + dx / d * (s.shel.R + 0.15), 0, s.shel.z + dz / d * (s.shel.R + 0.15));
+      }
+      if (s.state === 'hide') {
+        s.hideT += dt; const toS = Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z);
+        if (!wantHide) { s.state = 'crawl'; s.shel = null; pickGoal(s, env); }
+        else if (toS < 0.35 || (toS < 0.9 && s.hideT > 25) || (toS < 3 && s.hideT > 60) || s.hideT > 120) { s.state = 'pose'; s.enter = true; s.lurk = false; s.pose = enterPath(s, s.shel); s.poseI = 0; }
+      }
+      if (!wantHide && s.state === 'hidden') { s.hidden = 0; s.state = 'pose'; s.emerge = true; s.pose = emergePath(s, s.shel); s.poseI = 0; s.trail.length = 0; s.axTrail.length = 0; }
       // flee from the player
       const dp = cam ? Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) : 99;
-      if (!s.noFlee && dp < 2.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
+      if (!s.noFlee && dp < 2.0 && cam && !inOut && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
         s.state = 'flee'; s.stateT = 15; s.pose = null; s.fleeDive = R() < 0.35; s.slowT = 0;
         s.avoidP = new V(cam.x, 0, cam.z); s.avoidT = 20;
         // refuge: water, reeds or grass 2-8 m away, in a direction at least ~100 deg away from the player, inside the zone
@@ -288,7 +331,7 @@ export function createSnakes(world, Q, scene) {
       }
       const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
       if (dp > 7) s.lurked = false;
-      if (!s.noFlee && cam && !s.lurked && dp > 2.5 && dp < 4 && !inWater && (s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) { s.lurked = true; if (R() < 0.5) startLurk(s); }
+      if (!s.noFlee && cam && !inOut && !s.lurked && dp > 2.5 && dp < 4 && !inWater && (s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) { s.lurked = true; if (R() < 0.5) startLurk(s); }
       if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.1); s.splashed = true; }
       if (!inWater) s.splashed = false;
       s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 0.8);
@@ -296,7 +339,7 @@ export function createSnakes(world, Q, scene) {
       let want = 0;
       if (s.state === 'bask') { s.stateT -= dt; if (s.stateT <= 0) { pickGoal(s, env); } }
       else if (s.state === 'hidden') want = 0;
-      else if (s.state === 'pose') want = 0.1;
+      else if (s.state === 'pose') want = s.enter || s.emerge ? 0.13 : 0.1;
       else {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
         want = s.state === 'flee' ? (inWater ? 0.69 : 0.56) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
@@ -348,7 +391,6 @@ export function createSnakes(world, Q, scene) {
       if (s.slowT > 0) { s.slowT -= dt; if (s.state !== 'crawl') s.slowT = 0; }
       s.slowK += ((s.slowT > 0 ? 0.04 : 1) - s.slowK) * Math.min(1, dt * 0.9);
       if (s.state === 'crawl' && !s.dv) want *= s.slowK;
-      if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
       if (s.state !== 'pose') { const th = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1), J = 1 - th * th / 4 + Math.pow(th, 4) / 64; s.Jc = Math.max(0.45, J); want /= s.Jc; }
       s.spd += (want - s.spd) * Math.min(1, dt * (s.state === 'flee' ? 7 : 2.5));
       s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
@@ -363,13 +405,18 @@ export function createSnakes(world, Q, scene) {
             if (d <= rem) { s.hd.x = px; s.hd.z = pz; rem -= d; s.poseI++; } else { s.hd.x += (px - s.hd.x) / d * rem; s.hd.z += (pz - s.hd.z) / d * rem; rem = 0; }
           }
           const tr = s.trail[0]; if (tr) s.th = Math.atan2(s.hd.z - tr.z, s.hd.x - tr.x);
-          if (s.poseI >= s.pose.length) { s.state = 'bask'; s.stateT = s.lurk ? 10 + R() * 30 : 35 + R() * 60; s.lurk = false; s.spd = 0; }
+          if (s.poseI >= s.pose.length) {
+            if (s.enter) { s.enter = false; s.state = 'hidden'; s.hidden = 1; s.spd = 0; }
+            else if (s.emerge) { s.emerge = false; s.shel = null; s.state = 'crawl'; s.goal = null; pickGoal(s, env); } // (sunny: pickGoal often sends it to bask nearby)
+            else { s.state = 'bask'; s.stateT = s.lurk ? 10 + R() * 30 : 35 + R() * 60; s.lurk = false; s.spd = 0; }
+          }
           s.ax.set(s.hd.x, 0, s.hd.z); s.axTh = s.th; s.amp = 0.7;
         } else {
           // steer the axis toward the goal, around trunks and rocks
           let dTh = 0;
           if (s.goal) dTh = Math.atan2(Math.sin(Math.atan2(s.goal.z - s.ax.z, s.goal.x - s.ax.x) - s.axTh), Math.cos(Math.atan2(s.goal.z - s.ax.z, s.goal.x - s.ax.x) - s.axTh));
           for (const [ox, oz, orr] of obst) {
+            if (s.shel && s.state === 'hide' && Math.hypot(ox - s.shel.x, oz - s.shel.z) < 0.8) continue; // its own shelter: go to it
             const dx = ox - s.hd.x, dz = oz - s.hd.z, dd = Math.hypot(dx, dz);
             if (dd < orr + 0.6) { const fa = Math.atan2(dz, dx), rel = Math.atan2(Math.sin(fa - s.axTh), Math.cos(fa - s.axTh)); if (Math.abs(rel) < 1.4) dTh += (rel > 0 ? -1 : 1) * 1.6 * (1 - (dd - orr) / 0.6); }
           }
@@ -441,7 +488,7 @@ export function createSnakes(world, Q, scene) {
       // heights: on the visible ground, floating at the surface in water; head + neck raised
       const alert = s.state === 'bask' ? 0.3 + 0.5 * Math.max(0, Math.sin(t * 0.13 + k * 1.7)) : s.state === 'flee' ? 0.6 : 0.25;
       s.lift += ((s.wet > 0.5 ? 0.45 : alert) - s.lift) * Math.min(1, dt * 2);
-      const sinkH = s.hidden * 0.12, fl = 1 - 0.25 * s.flat;
+      const sinkH = 0, fl = 1 - 0.25 * s.flat;
       for (let i = 0; i < NODES; i++) {
         const u = i / (NODES - 1), r = radius(s, u) * fl;
         const g = Hg(Pn[i].x, Pn[i].z);
@@ -460,6 +507,11 @@ export function createSnakes(world, Q, scene) {
       for (let i = 0; i < NODES; i++) { let a = 0, w = 0; for (let k2 = -4; k2 <= 4; k2++) { const q = i + k2; if (q < 0 || q >= NODES) continue; const ww = 5 - Math.abs(k2); a = Math.max(a, lifts[q] * ww / 5); w += ww; } Pn[i].y += a; }
       // smooth heights along the body
       for (let pass = 0; pass < 2; pass++) { let prev = Pn[0].y; for (let i = 1; i < NODES - 1; i++) { const cur = Pn[i].y; Pn[i].y = Math.max(cur, (prev + 2 * cur + Pn[i + 1].y) / 4); prev = cur; } }
+      // under the shelter: the parts of the body inside its outline go down out of sight
+      if (s.shel && (s.state === 'hidden' || s.enter || s.emerge || s.state === 'hide')) {
+        const q = s.shel;
+        for (let i = 0; i < NODES; i++) { const d = Math.hypot(Pn[i].x - q.x, Pn[i].z - q.z), f = sm(q.R, q.R - 0.22, d); if (f > 0) Pn[i].y -= f * 0.35; }
+      }
       // tube vertices
       const P = s.body.geometry.attributes.position.array, Nr = s.body.geometry.attributes.normal.array;
       const breathe = 1 + 0.03 * Math.sin(t * 1.3 + k) * s.flat;
@@ -491,7 +543,7 @@ export function createSnakes(world, Q, scene) {
       s.nextTongue -= dt;
       if (s.nextTongue <= 0 && s.state !== 'hidden') { s.tongueT = 0.001; s.nextTongue = (s.state === 'bask' ? 2 : 1) + R() * 4; }
       if (s.tongueT > 0) { s.tongueT += dt; const f = s.tongueT < 0.5 ? Math.abs(Math.sin(s.tongueT / 0.5 * Math.PI * 2)) : 0; s.tongue.scale.x = Math.max(0.001, f); if (s.tongueT > 0.5) { s.tongueT = 0; s.tongue.scale.x = 0.001; } }
-      const vis = s.hidden < 0.98; s.body.visible = vis; s.head.visible = vis;
+      const vis = s.state !== 'hidden'; s.body.visible = vis; s.head.visible = vis;
       // ---- water shader data: 10 body points (head -> tail) + 8 wave sources at loop apexes ----
       const base = k * 24, inW = vis && s.wet > 0.05;
       if (inW) {

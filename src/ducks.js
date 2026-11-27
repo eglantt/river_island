@@ -172,11 +172,11 @@ export function createDucks(world, Q, scene) {
         if (r < 0.65 && t < 250) { c = barRoost(); kind = 'bar'; if (!c) continue; }
         else if (t < 400) { kind = 'reed'; const L = reedAll; if (!L.length) continue; c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue; }
         else { kind = 'shore'; c = shoreNear(from, 60); if (!c) continue; }
-      } else if (r < 0.34) { kind = 'isle'; c = isleWater(); if (!c) continue; }
-      else if (r < 0.6) { kind = 'reed'; c = offReed(reedAll[Math.floor(R() * reedAll.length)] || from); if (!c) continue; }
+      } else if (r < 0.42) { kind = 'isle'; c = isleWater(); if (!c) continue; }
+      else if (r < 0.62) { kind = 'reed'; const rp = reedAll[Math.floor(R() * reedAll.length)]; if (!rp || Math.abs(rp.x) > 95) continue; c = offReed(rp); if (!c) continue; }
       else {
         kind = r < 0.9 ? 'bank' : 'open';
-        const dir = Math.abs(from.x) > 90 && R() < 0.75 ? -Math.sign(from.x) : (R() < 0.5 ? -1 : 1), x = Math.max(-160, Math.min(160, from.x + dir * (20 + R() * 70)));
+        const dir = Math.abs(from.x) > 45 && R() < 0.75 ? -Math.sign(from.x) : (R() < 0.5 ? -1 : 1), x = Math.max(-90, Math.min(90, from.x + dir * (20 + R() * 55)));
         const sd = R() < 0.3 ? -side0 : side0, hw = world.hwAt(x);
         const z = world.mz(x) + sd * (kind === 'bank' ? hw - 3 - R() * 7 : R() * hw * 0.75);
         if (!wet(x, z, -0.3, kind === 'bank' ? -1.4 : -9)) continue;
