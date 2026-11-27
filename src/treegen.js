@@ -139,6 +139,30 @@ export function tube(P, Rr, opts) {
     }
   }
   const W = rad + 1;
+  // end cap fitted exactly to the last ring: concentric rings toward the centre (for the cut-wood colouring);
+  // a broken end bulges out into a splintered point
+  if (opts.capEnd) {
+    const cp = [], i0 = (n - 1) * W, Tn = T[n - 1], c0 = P[n - 1], rings = 4, bulge = opts.capEnd === 'broken' ? 0.7 : 0.06;
+    const rim = []; for (let j = 0; j <= rad; j++) rim.push(new V3(pos[(i0 + j) * 3], pos[(i0 + j) * 3 + 1], pos[(i0 + j) * 3 + 2]));
+    const rMean = rim.reduce((a, q) => a + q.distanceTo(c0), 0) / rim.length;
+    const at = (j, k) => { // k = 0 rim .. rings centre
+      const f = 1 - k / rings, q = c0.clone().lerp(rim[j], f);
+      const jag = opts.capEnd === 'broken' ? (0.6 + 0.8 * Math.abs(Math.sin(j * 2.7 + sd * 3.1))) : 1;
+      return q.addScaledVector(Tn, rMean * bulge * jag * (1 - f * f) + rMean * 0.02 * Math.sin(j * 1.9 + k * 2.3));
+    };
+    const pts = []; for (let k = 0; k <= rings; k++) { const row = []; for (let j = 0; j <= rad; j++) row.push(at(j, k)); pts.push(row); }
+    for (let k = 0; k < rings; k++) for (let j = 0; j < rad; j++) {
+      const a = pts[k][j], b = pts[k][j + 1], c = pts[k + 1][j], d = pts[k + 1][j + 1];
+      cp.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, b.x, b.y, b.z, d.x, d.y, d.z, c.x, c.y, c.z);
+    }
+    const cg = new THREE.BufferGeometry(); cg.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3));
+    cg.computeVertexNormals();
+    // keep the winding facing outward (along the tangent)
+    const nA = cg.attributes.normal; let dot = 0; for (let i = 0; i < nA.count; i++) dot += nA.getX(i) * Tn.x + nA.getY(i) * Tn.y + nA.getZ(i) * Tn.z;
+    if (dot < 0) { const A = cg.attributes.position; for (let i = 0; i < A.count; i += 3) { for (let c = 0; c < 3; c++) { const t1 = A.getComponent(i + 1, c); A.setComponent(i + 1, c, A.getComponent(i + 2, c)); A.setComponent(i + 2, c, t1); } } cg.computeVertexNormals(); }
+    cg.userData = { c: c0.clone(), r: rMean, axis: Tn.clone(), broken: opts.capEnd === 'broken' };
+    opts._cap = cg;
+  }
   for (let i = 0; i < n - 1; i++) for (let j = 0; j < rad; j++) {
     const a = i * W + j, b = a + 1, c = a + W, d = c + 1;
     idx.push(a, b, c, b, d, c);
@@ -180,8 +204,12 @@ export function skeletonTubes(nodes, opts, emit) {
       const cr = new THREE.CatmullRomCurve3(P, false, 'centripetal', 0.5), m = (P.length - 1) * 2;
       PP = cr.getSpacedPoints(m); RR = PP.map((_, i) => { const t = i / m * (Rr.length - 1), a = Math.floor(t), b = Math.min(Rr.length - 1, a + 1); return Rr[a] + (Rr[b] - Rr[a]) * (t - a); });
     }
-    const g = tube(PP, RR, { ...opts, flare: !first ? opts.flare : 0, seed: (opts.seed || 0) + emit.count++ * 3.7 });
+    // close the thick or broken ends (a hollow tube would show through from the end)
+    const last = nodes[ch.idx[ch.idx.length - 1]], capEnd = emit.cap && (last.broken ? 'broken' : RR[RR.length - 1] > 0.03 ? 'cut' : null);
+    const o2 = { ...opts, flare: !first ? opts.flare : 0, seed: (opts.seed || 0) + emit.count++ * 3.7, capEnd };
+    const g = tube(PP, RR, o2);
     if (g) emit(g, nodes[ch.idx[first ? 1 : 0]]);
+    if (g && o2._cap) emit.cap(o2._cap, last);
   }
 }
 

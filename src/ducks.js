@@ -154,14 +154,25 @@ export function createDucks(world, Q, scene) {
     }
     return null;
   };
+  // shallow water next to the nearest shore: somewhere to sleep without a long trip
+  function shoreNear(p, maxR = 25) {
+    for (let r = 3; r <= maxR; r += 2) for (let k = 0; k < 16; k++) {
+      const a = k / 16 * 6.283 + r, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+      if (!wet(x, z, -0.2, -0.7)) continue;
+      let land = false; for (let j = 0; j < 8 && !land; j++) { const b = j * 0.785; if (H(x + Math.cos(b) * 2.5, z + Math.sin(b) * 2.5) > 0.05) land = true; }
+      if (land) { const c = new V(x, 0, z); c.kind = 'shore'; return c; }
+    }
+    return null;
+  }
   function pickSpot(from, o = {}) {
     const cam = o.cam, side0 = sideOf(from);
     for (let t = 0; t < 500; t++) {
       const r = R(); let c = null, kind;
-      if (o.night) { // the tail bar about every other night, else a backwater at the reeds
-        if (r < 0.5) { c = barRoost(); kind = 'bar'; if (!c) continue; }
-        else { kind = 'reed'; const L = r < 0.75 ? reedAll.filter((p) => world.islandE(p.x, p.z) < 1.6) : reedW; if (!L.length) continue; c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue; }
-      } else if (r < 0.4) { kind = 'isle'; c = isleWater(); if (!c) continue; }
+      if (o.night) { // the tail bar when it is within reach (most nights), else a backwater at reeds nearby, else the shore
+        if (r < 0.65 && t < 250) { c = barRoost(); kind = 'bar'; if (!c) continue; }
+        else if (t < 400) { kind = 'reed'; const L = reedAll; if (!L.length) continue; c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue; }
+        else { kind = 'shore'; c = shoreNear(from, 60); if (!c) continue; }
+      } else if (r < 0.34) { kind = 'isle'; c = isleWater(); if (!c) continue; }
       else if (r < 0.6) { kind = 'reed'; c = offReed(reedAll[Math.floor(R() * reedAll.length)] || from); if (!c) continue; }
       else {
         kind = r < 0.9 ? 'bank' : 'open';
@@ -174,7 +185,7 @@ export function createDucks(world, Q, scene) {
       if (Math.abs(c.x) > 170) continue;
       const dFrom = c.distanceTo(from);
       if (dFrom < (o.near || o.night ? 6 : 18)) continue;
-      if (dFrom > (o.night ? 200 : 75)) continue;
+      if (dFrom > (o.night ? (c.kind === 'bar' ? 90 : 60) : 75)) continue;
       // never straight at the player
       if (cam && Math.hypot(c.x - cam.x, c.z - cam.z) < (o.night ? 9 : 6)) continue;
       if (o.away && (c.x - from.x) * o.away.x + (c.z - from.z) * o.away.z < 0) continue;
@@ -211,6 +222,53 @@ export function createDucks(world, Q, scene) {
     }
     return best;
   }
+  // coarse water map (2 m cells, columns along x, rows across the river relative to its axis) and a distance field
+  // from the leader: a duck cut off by land walks down the field round the island, the bar or a spit
+  const GC = 2, GX0 = -184, GNX = 185, GNR = 71, GR0 = 35;
+  const gWater = new Uint8Array(GNX * GNR);
+  for (let i = 0; i < GNX; i++) { const x = GX0 + i * GC, m = world.mz(x); for (let r = 0; r < GNR; r++) gWater[i * GNR + r] = H(x, m + (r - GR0) * GC) < -0.1 ? 1 : 0; }
+  const cellOf = (x, z) => { const i = Math.round((x - GX0) / GC); if (i < 0 || i >= GNX) return -1; const r = Math.round((z - world.mz(GX0 + i * GC)) / GC) + GR0; return r < 0 || r >= GNR ? -1 : i * GNR + r; };
+  const cellPos = (c) => { const i = Math.floor(c / GNR), r = c % GNR, x = GX0 + i * GC; return new V(x, 0, world.mz(x) + (r - GR0) * GC); };
+  const gDist = new Float32Array(GNX * GNR), gQ = new Int32Array(GNX * GNR); let gSrc = null, gT = -1e9;
+  function field(src, t) {
+    if (gSrc && gSrc.distanceTo(src) < 3 && t - gT < 4) return;
+    gSrc = src.clone(); gT = t; gDist.fill(1e9);
+    let c0 = cellOf(src.x, src.z); if (c0 < 0) return;
+    if (!gWater[c0]) { // the source sits in the shallows: start from the nearest water cell
+      let best = -1, bd = 1e9; const i0 = Math.floor(c0 / GNR), r0 = c0 % GNR;
+      for (let di = -3; di <= 3; di++) for (let dr = -3; dr <= 3; dr++) { const i = i0 + di, r = r0 + dr; if (i < 0 || i >= GNX || r < 0 || r >= GNR) continue; const c = i * GNR + r; if (gWater[c] && di * di + dr * dr < bd) { bd = di * di + dr * dr; best = c; } }
+      if (best < 0) return; c0 = best;
+    }
+    let h = 0, tl = 0; gQ[tl++] = c0; gDist[c0] = 0;
+    while (h < tl) {
+      const c = gQ[h++], i = Math.floor(c / GNR), r = c % GNR, x = GX0 + i * GC, z = world.mz(x) + (r - GR0) * GC;
+      for (let di = -1; di <= 1; di++) {
+        const ii = i + di; if (ii < 0 || ii >= GNX) continue;
+        const rr0 = Math.round((z - world.mz(GX0 + ii * GC)) / GC) + GR0;
+        for (let dr = -1; dr <= 1; dr++) {
+          if (!di && !dr) continue; const rr = rr0 + dr; if (rr < 0 || rr >= GNR) continue;
+          const n2 = ii * GNR + rr; if (!gWater[n2]) continue;
+          const nd = gDist[c] + (di && dr ? 1.414 : 1); if (nd < gDist[n2]) { gDist[n2] = nd; gQ[tl++] = n2; }
+        }
+      }
+    }
+  }
+  // a few cells down the field from p: the way round the obstacle
+  function wayOut(p) {
+    let c = cellOf(p.x, p.z); if (c < 0) return null;
+    if (!gWater[c] || gDist[c] >= 1e9) { // standing in the shallows: the best water cell around
+      let best = -1, bd = 1e9; const i0 = Math.floor(c / GNR), r0 = c % GNR;
+      for (let di = -2; di <= 2; di++) for (let dr = -2; dr <= 2; dr++) { const i = i0 + di, r = r0 + dr; if (i < 0 || i >= GNX || r < 0 || r >= GNR) continue; const q2 = i * GNR + r; if (gWater[q2] && gDist[q2] < bd) { bd = gDist[q2]; best = q2; } }
+      if (best < 0) return null; return cellPos(best);
+    }
+    for (let step = 0; step < 3; step++) {
+      const i = Math.floor(c / GNR), r = c % GNR, x = GX0 + i * GC, z = world.mz(x) + (r - GR0) * GC; let best = c;
+      for (let di = -1; di <= 1; di++) { const ii = i + di; if (ii < 0 || ii >= GNX) continue; const rr0 = Math.round((z - world.mz(GX0 + ii * GC)) / GC) + GR0;
+        for (let dr = -1; dr <= 1; dr++) { const rr = rr0 + dr; if (rr < 0 || rr >= GNR) continue; const n2 = ii * GNR + rr; if (gWater[n2] && gDist[n2] < gDist[best]) best = n2; } }
+      if (best === c) break; c = best;
+    }
+    return cellPos(c);
+  }
   const start = pickSpot(new V((R() * 2 - 1) * 120, 0, 0), { near: true });
   const leader = {
     p: start.clone(), tgt: start.clone(), home: start.clone(), dir: new V(1, 0, 0), v: new V(), ph: R() * 10,
@@ -226,7 +284,7 @@ export function createDucks(world, Q, scene) {
       pitch: 0, s: 1, upAmt: 0, stray: 0, roll: 0, viaT: 0, via: null, tuck: 0, tuckDelay: R() * 40, tuckSide: R() < 0.5 ? -1 : 1,
     };
   });
-  let night = false;
+  let night = false, prevEl = null;
   const mb = new THREE.Matrix4(), mh = new THREE.Matrix4(), mloc = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new V(), tv = new V(), fw = new V();
   const approach = (a, b, r) => a + (b - a) * Math.min(1, r);
   const DIRS = [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.45, -1.45, 1.9, -1.9, 2.4, -2.4, 3.0];
@@ -238,8 +296,12 @@ export function createDucks(world, Q, scene) {
     // ---- the player (walking only): nearest duck distance
     let dmin = 1e9;
     if (cam) for (const k of ducks) dmin = Math.min(dmin, Math.hypot(k.p.x - cam.x, k.p.z - cam.z));
-    const wantNight = env.night > 0.6;
-    if (wantNight && !night) { night = true; if (L.st !== 'flee') go(pickSpot(L.p, { night: true, cam, near: true }), 'roost'); }
+    // bedtime starts at sunset (the flock is at its roost by full dark) and ends at dawn twilight
+    // (evening: the sun sinking below +3 deg; morning: the sun rising above -5 deg)
+    let wantNight;
+    if (env.el === undefined) wantNight = env.night > 0.6;
+    else { const el = env.el, rising = prevEl !== null && el > prevEl; prevEl = el; wantNight = night ? !(rising && el > -5) : (!rising && el < 3); }
+    if (wantNight && !night) { night = true; L.napped = false; if (L.st !== 'flee') go(pickSpot(L.p, { night: true, cam, near: true }), 'roost'); }
     if (!wantNight && night) { night = false; if (L.st === 'sleep' || L.st === 'roost') { L.st = 'wake'; L.stT = 25 + R() * 40; } }
     L.wary = Math.max(0, L.wary - dt);
     // alarm: swim off when the player comes closer than 4-5 m (3 m if he crouches or stands still); wakes a sleeping flock
@@ -266,11 +328,21 @@ export function createDucks(world, Q, scene) {
         else { L.st = 'linger'; L.stT = night ? 60 + R() * 60 : 30 + R() * 40; L.home.copy(L.p); L.tgt.copy(L.p); }
       }
     } else if (L.st === 'travel' || L.st === 'roost') {
-      moving = d > 1.2; lsp = (L.st === 'roost' ? 0.34 : 0.32) * (0.8 + 0.4 * (N.n2(t * 0.05 + L.ph, 3.1) * 0.5 + 0.5));
+      moving = d > 1.2; lsp = (L.st === 'roost' ? 0.45 : 0.32) * (0.8 + 0.4 * (N.n2(t * 0.05 + L.ph, 3.1) * 0.5 + 0.5));
       if (alertNow) lsp *= 0.6;
       if (!moving) { if (L.st === 'roost') { L.st = 'sleep'; L.home.copy(L.p); L.roostP = L.tgt.clone(); L.roostP.kind = L.tgtKind; L.roostP.side = L.tgtSide; } else { L.st = 'linger'; L.stT = 80 + R() * 160; L.home.copy(L.p); } L.visits.push([t, L.p.x, L.p.z]); }
-      // no progress for a long time (blocked) -> another place
-      L.prog += dt; if (L.prog > 40) { if (L.p.distanceTo(L.progP) < 4) go(pickSpot(L.p, { night, cam }), L.st); L.prog = 0; L.progP.copy(L.p); }
+      // full dark and still far from the roost: settle at the nearest shore instead
+      if (L.st === 'roost' && env.night > 0.9 && d > 25 && !L.napped) { L.napped = true; const c = shoreNear(L.p, 25); if (c) go(c, 'roost'); }
+      // no progress for a long time (blocked) -> another place; going to roost: close enough is good enough
+      L.prog += dt; L.roostT = L.st === 'roost' ? (L.roostT || 0) + dt : 0;
+      if (L.st === 'roost' && (L.roostT > 150 || (env.night > 0.95 && L.roostT > 40 && d > 15)) && !L.napped) { L.napped = true; const c = shoreNear(L.p, 20); if (c) go(c, 'roost'); else { L.st = 'sleep'; L.home.copy(L.p); L.roostP = L.p.clone(); } }
+      if (L.prog > (L.st === 'roost' ? 20 : 40)) {
+        if (L.p.distanceTo(L.progP) < 4) {
+          if (L.st === 'roost' && (d < 8 || L.napped)) { L.st = 'sleep'; L.home.copy(L.p); L.roostP = L.p.clone(); L.roostP.kind = L.tgtKind; }
+          else go(pickSpot(L.p, { night, cam }), L.st);
+        }
+        L.prog = 0; L.progP.copy(L.p);
+      }
     } else if (L.st === 'linger') {
       // potter about the place: short hops around it with feeding pauses
       L.nextPause -= dt;
@@ -334,7 +406,8 @@ export function createDucks(world, Q, scene) {
         const gx = goal.x - k.p.x, gz = goal.z - k.p.z, gd = Math.hypot(gx, gz);
         if (gd > 2.5 && !clear(k.p.x, k.p.z, gx / gd, gz / gd, gd)) {
           const tr = leader.trail;
-          for (let j = tr.length - 1; j >= 0; j -= 1) { const q2 = tr[j], dx = q2.x - k.p.x, dz = q2.z - k.p.z, dd = Math.hypot(dx, dz); if (dd < 0.8 || dd > 45) continue; if (clear(k.p.x, k.p.z, dx / dd, dz / dd, dd)) { k.via = q2; break; } }
+          for (let j = tr.length - 1; j >= Math.max(0, tr.length - 40); j -= 1) { const q2 = tr[j], dx = q2.x - k.p.x, dz = q2.z - k.p.z, dd = Math.hypot(dx, dz); if (dd < 0.8 || dd > 30) continue; if (clear(k.p.x, k.p.z, dx / dd, dz / dd, dd)) { k.via = q2; break; } }
+          if (!k.via) { field(sleeping ? leader.home : leader.p, t); k.via = wayOut(k.p); }
         }
       }
       if (k.via) goal = k.via.clone();

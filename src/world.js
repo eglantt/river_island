@@ -41,6 +41,20 @@ export function limbGeo(p0, p1, r0, r1, segs = 6, hseg = 2) {
   return g;
 }
 
+// flat (slightly domed) disc closing a cylinder end, with concentric rings of vertices for the cut-wood colouring
+export function capDisc(c, axis, r, segs = 8, rings = 3, dome = 0.05) {
+  const ax = axis.clone().normalize(), u = new THREE.Vector3(Math.abs(ax.y) < 0.9 ? 0 : 1, Math.abs(ax.y) < 0.9 ? 1 : 0, 0).cross(ax).normalize(), w = new THREE.Vector3().crossVectors(ax, u);
+  const pt = (j, k) => { const f = 1 - k / rings, a = j / segs * Math.PI * 2; return c.clone().addScaledVector(u, Math.cos(a) * r * f).addScaledVector(w, Math.sin(a) * r * f).addScaledVector(ax, r * dome * (1 - f * f)); };
+  const pos = [];
+  for (let k = 0; k < rings; k++) for (let j = 0; j < segs; j++) {
+    const a = pt(j, k), b = pt(j + 1, k), cc = pt(j, k + 1), d = pt(j + 1, k + 1);
+    pos.push(a.x, a.y, a.z, cc.x, cc.y, cc.z, b.x, b.y, b.z, b.x, b.y, b.z, cc.x, cc.y, cc.z, d.x, d.y, d.z);
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.computeVertexNormals();
+  const nA = g.attributes.normal; if (nA.getX(0) * ax.x + nA.getY(0) * ax.y + nA.getZ(0) * ax.z < 0) { const A = g.attributes.position; for (let i = 0; i < A.count; i += 3) for (let q = 0; q < 3; q++) { const t = A.getComponent(i + 1, q); A.setComponent(i + 1, q, A.getComponent(i + 2, q)); A.setComponent(i + 2, q, t); } g.computeVertexNormals(); }
+  return g;
+}
+
 // Displaced icosahedron blob with soft radial normals
 export function blobGeo(N, c, r, sy, detail = 1, rough = 0.28) {
   const g = new THREE.IcosahedronGeometry(1, detail);
@@ -408,8 +422,29 @@ export function buildWorld(seed, Q) {
     return { nodes, height, S };
   }
   const barkNoise = (a, b) => N.n2(a, b);
+  // cut / broken wood seen end-on: pale heartwood with growth rings, darker rim and sapwood, a radial crack or two;
+  // weathered (driftwood) ends are greyer, broken stubs are splintery and lighter at the tip
+  const cWoodL = C('#e2cfa6'), cWoodD = C('#a07e55'), cWoodRim = C('#4a3828'), cWoodGrey = C('#9c968a'), cWoodTmp = new THREE.Color();
+  const woodEnd = (c, axis, r, weather = 0, broken = false) => (v) => {
+    const d = new THREE.Vector3().subVectors(v, c), along = d.dot(axis); d.addScaledVector(axis, -along);
+    const rr = Math.min(1, d.length() / Math.max(1e-4, r)), ang = Math.atan2(d.z, d.x + d.y * 0.7);
+    const ringN = 4 + r * 40, ring = 0.5 + 0.5 * Math.sin(rr * ringN * 6.283 + 0.6 * N.n2(v.x * 9, v.z * 9));
+    cWoodTmp.copy(cWoodL).lerp(cWoodD, ring * 0.55 + 0.15 * N.n2(v.x * 23, v.z * 23 + v.y * 17) + rr * 0.15);
+    const crack = Math.pow(Math.max(0, Math.cos(ang * 2 + c.x * 3.1)), 40) * (0.3 + rr);
+    cWoodTmp.lerp(cWoodRim, Math.min(1, crack * 0.9 + Math.pow(rr, 5) * 0.9));
+    if (broken) cWoodTmp.lerp(cWoodL, Math.min(1, along / Math.max(1e-3, r) * 0.6)).multiplyScalar(1.05);
+    return cWoodTmp.lerp(cWoodGrey, weather).multiplyScalar(1.35);
+  };
+  // a log or branch: open cylinder plus closed ends
+  function woodLimb(p0, p1, r0, r1, segs, hseg, colorFn, weather = 0.18) {
+    trunkAcc.add(limbGeo(p0, p1, r0, r1, segs, hseg), colorFn, () => 0);
+    const ax = new THREE.Vector3().subVectors(p1, p0).normalize();
+    trunkAcc.add(capDisc(p1, ax, r1, segs, r1 > 0.05 ? 3 : 1), woodEnd(p1, ax, r1, weather), () => 0);
+    trunkAcc.add(capDisc(p0, ax.clone().negate(), r0, segs, r0 > 0.05 ? 3 : 1), woodEnd(p0, ax.clone().negate(), r0, weather), () => 0);
+  }
   function emitBark(nodes, S, bt, colorFn, swayT, seed) {
     const emit = (g, nd) => barkAcc[bt].add(g, colorFn(nd), swayT, 1, 1); emit.count = 0;
+    emit.cap = (g, nd) => { const u = g.userData; trunkAcc.add(g, woodEnd(u.c, u.axis, u.r, 0.12, u.broken), () => 0); };
     skeletonTubes(nodes, { noise: barkNoise, irr: S.irr, seed, flare: S.flare, flareK: S.flareK, twist: 0.12, uvScale: 0.6 }, emit);
   }
   function addRoots(base, S, bt, colorFn, n, swayT) {
@@ -700,8 +735,8 @@ export function buildWorld(seed, Q) {
       const x = sx + (R() - 0.5) * sbL * 1.1, z = sz + (R() - 0.5) * sbW * 0.8, h = H(x, z); if (h < -0.1) continue;
       const a = R() * 6.28, L = 1.6 + R() * 2.4, r = 0.08 + R() * 0.1;
       const p0 = new THREE.Vector3(x - Math.cos(a) * L / 2, h + r * 0.7, z - Math.sin(a) * L / 2), p1 = new THREE.Vector3(x + Math.cos(a) * L / 2, h + r * 0.6, z + Math.sin(a) * L / 2);
-      trunkAcc.add(limbGeo(p0, p1, r, r * 0.7, 6, 2), (v) => tmp.copy(cDw).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 4, v.z * 4)), () => 0);
-      if (R() < 0.6) { const m = p0.clone().lerp(p1, 0.35 + R() * 0.3); trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3((R() - 0.5) * 0.9, 0.2 + R() * 0.4, (R() - 0.5) * 0.9)), r * 0.45, r * 0.2, 4, 1), () => cDw, () => 0); }
+      woodLimb(p0, p1, r, r * 0.7, 6, 2, (v) => tmp.copy(cDw).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 4, v.z * 4)));
+      if (R() < 0.6) { const m = p0.clone().lerp(p1, 0.35 + R() * 0.3); woodLimb(m, m.clone().add(new THREE.Vector3((R() - 0.5) * 0.9, 0.2 + R() * 0.4, (R() - 0.5) * 0.9)), r * 0.45, r * 0.2, 4, 1, () => cDw); }
     }
     { // washed-up wood on the tail bar: a barkless trunk lying along the current, its thick end upstream, and branches
       const at = (s0, nn) => { const ax = TB.ox + TB.dx * s0 * TB.len, az = TB.oz + TB.dz * s0 * TB.len, off = nn * tbHalfW(s0) + TB.curl * s0 * s0; return [ax - TB.dz * off, az + TB.dx * off]; };
@@ -713,14 +748,17 @@ export function buildWorld(seed, Q) {
         // two slightly bent pieces, weathered grey-brown with lengthwise cracks and darker wet underside
         const side = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)), pm = p0.clone().lerp(p1, 0.45).addScaledVector(side, (RB() - 0.5) * 0.5); pm.y += 0.04;
         const wood = (v, nrm) => tmp.copy(cDw3).multiplyScalar(0.62 + 0.22 * N.n2(v.x * 3.1, v.z * 3.1) + 0.14 * Math.abs(N.n2((v.x * Math.cos(a) + v.z * Math.sin(a)) * 1.2, (v.y + v.x * Math.sin(a) - v.z * Math.cos(a)) * 26))).lerp(cDw2, nrm && nrm.y < -0.2 ? 0.5 : 0);
-        trunkAcc.add(limbGeo(p0, pm, r, r * 0.8, 9, 3), wood, () => 0);
-        trunkAcc.add(limbGeo(pm, p1, r * 0.8, r * 0.5, 9, 3), wood, () => 0);
-        // root plate remains at the thick end: thick, uneven stubs
-        for (let k = 0; k < 6; k++) { const b = a + Math.PI + (RB() - 0.5) * 2.6, up = (RB() - 0.25) * 0.5, ln = 0.3 + RB() * 0.55;
-          const e = new THREE.Vector3(p0.x + Math.cos(b) * ln, Math.max(p0.y + up, hA + 0.03), p0.z + Math.sin(b) * ln);
-          trunkAcc.add(limbGeo(p0.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), 0.1), e, r * (0.45 + RB() * 0.25), r * 0.12, 5, 2), wood, () => 0); }
+        woodLimb(p0, pm, r, r * 0.8, 9, 3, wood);
+        woodLimb(pm, p1, r * 0.8, r * 0.5, 9, 3, wood);
+        // what is left of the roots at the thick end: a swollen root collar and a few short, broken, uneven stubs,
+        // most of them bent back and down into the sand
+        trunkAcc.add(blobGeo(N, p0.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), 0.06), r * 1.35, 0.85, 1, 0.35), wood, () => 0);
+        for (let k = 0; k < 5; k++) { const b = a + Math.PI + (k - 2) * 0.75 + (RB() - 0.5) * 0.4, down = k % 2 ? -0.25 - RB() * 0.2 : (RB() - 0.4) * 0.35, ln = 0.18 + RB() * 0.3;
+          const s0 = p0.clone().add(new THREE.Vector3(Math.cos(b) * r * 0.6, 0, Math.sin(b) * r * 0.6));
+          const e = new THREE.Vector3(s0.x + Math.cos(b) * ln, Math.max(s0.y + down * ln * 1.6, hA - 0.05), s0.z + Math.sin(b) * ln);
+          woodLimb(s0, e, r * (0.32 + RB() * 0.2), r * (0.1 + RB() * 0.1), 5, 1, wood); }
         for (let k = 0; k < 2; k++) { const m = p0.clone().lerp(p1, 0.4 + k * 0.25), b = a + (k ? 1 : -1) * (0.6 + RB() * 0.5);
-          trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3(Math.cos(b) * (0.3 + RB() * 0.4), 0.1 + RB() * 0.2, Math.sin(b) * (0.3 + RB() * 0.4))), r * 0.38, r * 0.14, 5, 1), wood, () => 0); }
+          woodLimb(m, m.clone().add(new THREE.Vector3(Math.cos(b) * (0.3 + RB() * 0.4), 0.1 + RB() * 0.2, Math.sin(b) * (0.3 + RB() * 0.4))), r * 0.38, r * 0.14, 5, 1, wood); }
         trunks.push([x, z, 0.35]); rockList.push([x, z, L / 2]);
       }
       for (let k = 0; k < 3; k++) { // branches, one of them half in the water at the edge
@@ -728,17 +766,17 @@ export function buildWorld(seed, Q) {
         const a = RB() * 6.28, L = 1.1 + RB() * 1.4, r = 0.04 + RB() * 0.04;
         const p0 = new THREE.Vector3(x - Math.cos(a) * L / 2, 0, z - Math.sin(a) * L / 2), p1 = new THREE.Vector3(x + Math.cos(a) * L / 2, 0, z + Math.sin(a) * L / 2);
         p0.y = Math.max(H(p0.x, p0.z), -0.12) + r * 0.8; p1.y = Math.max(H(p1.x, p1.z), -0.12) + r * 0.6;
-        trunkAcc.add(limbGeo(p0, p1, r, r * 0.5, 5, 2), (v) => tmp.copy(k ? cDw : cDw2).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 6, v.z * 6)), () => 0);
-        const m = p0.clone().lerp(p1, 0.5); trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3((RB() - 0.5) * 0.6, 0.1 + RB() * 0.15, (RB() - 0.5) * 0.6)), r * 0.5, r * 0.2, 4, 1), () => cDw, () => 0);
+        woodLimb(p0, p1, r, r * 0.5, 5, 2, (v) => tmp.copy(k ? cDw : cDw2).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 6, v.z * 6)));
+        const m = p0.clone().lerp(p1, 0.5); woodLimb(m, m.clone().add(new THREE.Vector3((RB() - 0.5) * 0.6, 0.1 + RB() * 0.15, (RB() - 0.5) * 0.6)), r * 0.5, r * 0.2, 4, 1, () => cDw);
       }
     }
     const fx = -60 - R() * 40, fside = -SG, zc = mz(fx), hw = hwAt(fx);
     const base = new THREE.Vector3(fx - 2, 0, zc + fside * (hw + 5)); base.y = H(base.x, base.z) + 0.2;
     const tip = new THREE.Vector3(fx + 5, -0.45, zc + fside * (hw - 7));
-    trunkAcc.add(limbGeo(base, tip, 0.32, 0.13, 7, 4), (v) => tmp.copy(cDw2).multiplyScalar(0.8 + 0.3 * N.n2(v.x * 3, v.y * 3)), () => 0);
+    woodLimb(base, tip, 0.32, 0.13, 7, 4, (v) => tmp.copy(cDw2).multiplyScalar(0.8 + 0.3 * N.n2(v.x * 3, v.y * 3)));
     for (let k = 0; k < 5; k++) {
       const m = base.clone().lerp(tip, 0.3 + k * 0.13), dir = new THREE.Vector3((R() - 0.5) * 1.4, 0.4 + R() * 0.8, (R() - 0.5) * 1.4).normalize();
-      trunkAcc.add(limbGeo(m, m.clone().addScaledVector(dir, 0.8 + R() * 1.4), 0.08, 0.025, 4, 1), () => cDw2, () => 0);
+      woodLimb(m, m.clone().addScaledVector(dir, 0.8 + R() * 1.4), 0.08, 0.025, 4, 1, () => cDw2);
     }
     trunks.push([base.x, base.z, 0.8]);
     // root plate at the base
