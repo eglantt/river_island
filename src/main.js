@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.34 alpha';
+const VERSION = '0.0.35 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -482,7 +482,8 @@ function frame(now) {
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
   ducks.update(dt, gameTime, env);
-  snakes.update(dt, gameTime, Object.assign(env, { cover: W.cover, rain: W.rain }));
+  // snakes notice only the walking player; the free camera and the auto flight are invisible to them
+  snakes.update(dt, gameTime, Object.assign({}, env, { cover: W.cover, rain: W.rain, cam: S.mode === 'walk' && !freeCam ? camera.position : null }));
   camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
   U.uCampOn.value = S.camp ? 1 : 0;
   if (audio.on) {
