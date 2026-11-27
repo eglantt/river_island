@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.37 alpha';
+const VERSION = '0.0.38 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -256,7 +256,10 @@ function updateEnv(dt) {
   U.uAmb.value.copy(hemi.color).multiplyScalar(hemi.intensity * 0.65);
   renderer.toneMappingExposure = 0.85 + 0.75 * night + 0.25 * dk;
   // fog
-  const fogC = tc.copy(hor).lerp(zen, 0.15);
+  // the horizon under clouds is the clouds' own (darker) colour: the distant haze and fog follow it, so mountains
+  // are not lighter than the overcast or night sky above them
+  U.uHaze.value.copy(hor).lerp(U.uCloudDark.value, Math.min(1, W.cover * 0.9) * (0.6 + 0.4 * night));
+  const fogC = tc.copy(U.uHaze.value).lerp(zen, 0.15);
   if (W.mist > 0.3) fogC.lerp(grey(hor, 1.05), 0.5);
   scene.fog.color.copy(fogC); scene.fog.near = W.near; scene.fog.far = W.far * (1 - dawnMist * 0.4); U.uFogNear.value = scene.fog.near; U.uFogFar.value = scene.fog.far;
   U.uFogCol.value.copy(fogC).lerp(tc.setRGB(0.6, 0.65, 0.7).multiplyScalar(day * 0.8 + 0.1), 0.25);

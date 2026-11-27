@@ -171,13 +171,22 @@ export function createSnakes(world, Q, scene) {
 
   // ---------- behaviour ----------
   const Hg = world.Hmesh || H; // height of the visible terrain mesh (triangles), not the analytic field
+  const islandWaterFar = () => { // open water within the zone, not deeper than 1.5 m: best of a few candidates (farther out)
+    let best = null, be = -1;
+    for (let t = 0; t < 200 && (!best || t < 40); t++) { const x = (R() * 2 - 1) * 34, z = zc0 + (R() * 2 - 1) * 26, h = Hg(x, z), e = islandE(x, z); if (h < -0.3 && h > -1.5 && e < 1.4 && e > be) { be = e; best = new V(x, 0, z); } }
+    return best || islandWater();
+  };
+  const awayOk = (s, g) => { if (!(s.avoidT > 0) || !s.avoidP) return true; const ax = s.hd.x - s.avoidP.x, az = s.hd.z - s.avoidP.z, gx = g.x - s.hd.x, gz = g.z - s.hd.z; return (ax * gx + az * gz) / (Math.hypot(ax, az) * Math.hypot(gx, gz) + 1e-6) > -0.17; };
   const pickGoal = (s, env) => {
     s.goalT = 0; s.gD = undefined;
     const sunny = env.sunInt * (1 - (env.cover || 0)) > 0.35 && env.day > 0.5;
-    const r = R();
-    if (sunny && r < 0.35) { s.state = 'toBask'; s.goal = s.bank ? bankPt(false) : islandPt(0.78, 1.0, 0.42); return; } // open sand at the water
-    if (r < 0.65) { s.state = 'crawl'; s.goal = s.bank ? (R() < 0.5 ? bankPt(true) : bankPt(false)) : (R() < 0.45 ? islandWater() : islandPt(0.65, 1.0)); return; }
-    s.state = 'crawl'; s.goal = s.bank ? bankPt(false) : (R() < 0.85 ? islandPt(0.65, 1.0) : islandPt(0.15, 0.65)); // mostly the shore band
+    for (let tries = 0; tries < 12; tries++) {
+      const r = R(), wet = s.wet > 0.5;
+      if (sunny && !wet && r < 0.3) { s.state = 'toBask'; s.goal = s.bank ? bankPt(false) : islandPt(0.78, 1.0, 0.42); }
+      else if (wet ? r < 0.7 : r < 0.6) { s.state = 'crawl'; s.goal = s.bank ? bankPt(true) : (R() < 0.6 ? islandWaterFar() : islandWater()); } // water: about half the time, often several goals in a row
+      else { s.state = 'crawl'; s.goal = s.bank ? bankPt(false) : (R() < 0.85 ? islandPt(0.65, 1.0) : islandPt(0.15, 0.65)); }
+      if (awayOk(s, s.goal)) return;
+    }
   };
   const tmp = new V(), side = new V(), upv = new V(), T = new V(), UP = new V(0, 1, 0);
   const Pl = [], Pw = [], Pn = [], Tn = [];
@@ -265,10 +274,17 @@ export function createSnakes(world, Q, scene) {
       // flee from the player
       const dp = cam ? Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) : 99;
       if (!s.noFlee && dp < 2.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
-        s.state = 'flee'; s.stateT = 4 + R() * 3; s.pose = null; s.fleeDive = R() < 0.35;
-        const away = new V(s.hd.x - cam.x, 0, s.hd.z - cam.z).normalize();
-        const w = s.bank ? bankPt(true) : islandWater();
-        s.goal = new V(w.x - s.hd.x, 0, w.z - s.hd.z).normalize().dot(away) > 0 ? w : s.hd.clone().addScaledVector(away, 4);
+        s.state = 'flee'; s.stateT = 15; s.pose = null; s.fleeDive = R() < 0.35; s.slowT = 0;
+        s.avoidP = new V(cam.x, 0, cam.z); s.avoidT = 20;
+        // refuge: water, reeds or grass 2-8 m away, in a direction at least ~100 deg away from the player, inside the zone
+        const ax = s.hd.x - cam.x, az = s.hd.z - cam.z, al = Math.hypot(ax, az) || 1; let best = null, bs = -1e9;
+        for (let c = 0; c < 40; c++) {
+          const a = Math.atan2(az, ax) + (R() - 0.5) * 2 * 1.4, d = 2.5 + R() * 5.5, x = s.hd.x + Math.cos(a) * d, z = s.hd.z + Math.sin(a) * d, h = Hg(x, z);
+          if (h < -1.5 || (s.bank ? Math.abs(x - bankX) > 24 : islandE(x, z) > 1.4)) continue;
+          const dot = (Math.cos(a) * ax + Math.sin(a) * az) / al; if (dot < -0.17) continue;
+          const sc = dot * 2 + (h < -0.2 ? 1.5 : 0) - Math.abs(d - 5) * 0.2; if (sc > bs) { bs = sc; best = new V(x, 0, z); }
+        }
+        s.goal = best || s.hd.clone().add(new V(ax / al * 3, 0, az / al * 3));
       }
       const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
       if (dp > 7) s.lurked = false;
@@ -284,7 +300,13 @@ export function createSnakes(world, Q, scene) {
       else {
         const toG = s.goal ? Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) : 0;
         want = s.state === 'flee' ? (inWater ? 0.69 : 0.56) : inWater ? 0.26 + 0.05 * Math.sin(t * 0.3 + k) : 0.18 + 0.05 * Math.sin(t * 0.3 + k);
-        if (s.state === 'flee') { s.stateT -= dt; if (s.stateT <= 0) pickGoal(s, env); }
+        if (s.state === 'flee') {
+          s.stateT -= dt;
+          const far = !cam || Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) > 6, at = s.goal && Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z) < 0.4;
+          if (s.stateT <= 0 || (far && at)) pickGoal(s, env);
+          else if (at && !far) { s.state = 'crawl'; s.avoidP = new V(cam.x, 0, cam.z); s.avoidT = 20; pickGoal(s, env); s.state = s.state === 'toBask' ? 'crawl' : s.state; s.fleeAgain = true; }
+        }
+        if (s.avoidT > 0) s.avoidT -= dt;
         if (s.state === 'toBask' && toG < 0.4 && !inWater) { s.state = 'pose'; s.poseKind = s.forcePose || (R() < 0.65 ? 'flat' : 'ring'); s.pose = posePath(s, s.poseKind); s.poseI = 0; }
         else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
@@ -320,15 +342,15 @@ export function createSnakes(world, Q, scene) {
       s.nextSlow -= dt;
       if (s.state === 'crawl' && !s.dv && s.slowT <= 0 && s.nextSlow <= 0) {
         if (!inWater && R() < 0.2) startLurk(s); // sometimes hides on land instead: coils up to be less visible
-        else s.slowT = inWater ? 3 + R() * 3 : 4 + R() * 6;
-        s.nextSlow = inWater ? 30 + R() * 20 : 20 + R() * 25;
+        else s.slowT = inWater ? 4 + R() * 4 : 4 + R() * 6;
+        s.nextSlow = inWater ? 15 + R() * 10 : 20 + R() * 25;
       }
       if (s.slowT > 0) { s.slowT -= dt; if (s.state !== 'crawl') s.slowT = 0; }
       s.slowK += ((s.slowT > 0 ? 0.04 : 1) - s.slowK) * Math.min(1, dt * 0.9);
       if (s.state === 'crawl' && !s.dv) want *= s.slowK;
       if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
       if (s.state !== 'pose') { const th = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1), J = 1 - th * th / 4 + Math.pow(th, 4) / 64; s.Jc = Math.max(0.45, J); want /= s.Jc; }
-      s.spd += (want - s.spd) * Math.min(1, dt * 2.5);
+      s.spd += (want - s.spd) * Math.min(1, dt * (s.state === 'flee' ? 7 : 2.5));
       s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
       // ---- head motion ----
       const step = s.spd * dt;
@@ -354,14 +376,15 @@ export function createSnakes(world, Q, scene) {
           { const lx = s.ax.x + Math.cos(s.axTh) * 1.1, lz = s.ax.z + Math.sin(s.axTh) * 1.1;
             if (Hg(lx, lz) < -1.6 || (s.bank ? Math.abs(lx - bankX) > 25 : islandE(lx, lz) > 1.45)) dTh += 1.2; }
           // wide turns only: the axis turns on a radius of at least ~half the body length, so a U-turn is a broad arc
-          const Rt = Math.max(0.5, 0.55 * s.L), maxTurn = step * (s.Jc || 1) / Rt; // radius measured along the forward progress
-          const dA = Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
+          const Rt = s.state === 'flee' ? 0.12 : Math.max(0.5, 0.55 * s.L), maxTurn = step * (s.Jc || 1) / Rt; // radius measured along the forward progress
+          const dA = Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * (s.state === 'flee' ? 30 : 1.5)));
           s.axTh += dA;
           s.turnK += (Math.min(1, Math.abs(dA) / Math.max(1e-6, maxTurn)) * Math.sign(dA) - s.turnK) * Math.min(1, dt * 2);
           // land: serpenoid path — the heading swings ±~70° sinusoidally with the distance crawled, giving round U-loops
           // with straight flanks (wave length along the body ~0.42 L); in the water the head goes almost straight
           // loops get smaller while turning, more on the inner side of the turn
-          const tk = Math.abs(s.turnK), thMax = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1) * (1 - 0.1 * tk), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
+          const fleeTurn = s.state === 'flee' && s.goal ? Math.abs(Math.atan2(Math.sin(Math.atan2(s.goal.z - s.hd.z, s.goal.x - s.hd.x) - s.axTh), Math.cos(Math.atan2(s.goal.z - s.hd.z, s.goal.x - s.hd.x) - s.axTh))) : 0;
+          const tk = Math.abs(s.turnK), thMax = 1.4 * s.amp * (s.state === 'flee' ? 0.85 * (1 - 0.55 * sm(0.5, 1.5, fleeTurn)) : 1) * (1 - 0.1 * tk), lam = 0.42 * s.L * (s.state === 'flee' ? 0.85 : 1);
           const wph = s.wph0 + 2 * Math.PI * step / lam, sw = Math.sin(wph);
           let hth = s.axTh + thMax * sw * (sw * s.turnK > 0 ? 1 - 0.12 * tk : 1);
           // never crawl over or through its own body: if the next head point comes close to the body, swing away
