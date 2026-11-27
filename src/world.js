@@ -112,33 +112,39 @@ export function buildWorld(seed, Q) {
   // bar frame: s = 0 at the root (inside the island) .. 1 at the tip; n = signed lateral offset from the (curled) axis
   const tbFrame = (x, z) => {
     const px = x - TB.ox, pz = z - TB.oz, a = px * TB.dx + pz * TB.dz, b = -px * TB.dz + pz * TB.dx, s = a / TB.len;
-    const sc = Math.max(0, Math.min(1, s));
-    return [s, b - TB.curl * sc * sc, a];
+    // the curled axis; past the tip it carries on along its tangent (no kink)
+    const off = s <= 0 ? 0 : s <= 1 ? TB.curl * s * s : TB.curl * (2 * s - 1);
+    return [s, b - off, a];
   };
-  // metric: < 1 dry sand, 1..2.3 shallow apron, then fades into the river bed
   // a tongue: wide where it leaves the island, narrowing steadily to the tip (no pier-like constant width)
   const tbHalfW = (s) => TB.w0 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 1.25) + 0.4;
+  // the dry sand outline (noisy half width) and the distance outside it in metres
+  const tbW = (x, z, s, n) => tbHalfW(Math.min(1, s)) * (1 + 0.18 * Math.sign(n * TB.curl)) * (1 + 0.14 * N.n2(x * 0.17 + 3.3, z * 0.17) + 0.06 * N.n2(x * 0.6, z * 0.6 + 2.2));
   const tbQ = (x, z) => {
-    const [s, n] = tbFrame(x, z);
-    // the side on the inside of the curl is gentler and wider
-    const asym = 1 + 0.18 * Math.sign(n * TB.curl);
-    const w = tbHalfW(Math.min(1, s)) * asym * (1 + 0.14 * N.n2(x * 0.17 + 3.3, z * 0.17) + 0.06 * N.n2(x * 0.6, z * 0.6 + 2.2));
+    const [s, n] = tbFrame(x, z), w = tbW(x, z, s, n);
     const ds = s < 0 ? -s * TB.len / 6 : s > 1 ? (s - 1) * TB.len / 2.2 : 0;
     return Math.hypot((n + 0.35 * N.n2(x * 0.33, z * 0.33 + 1.7)) / w, ds);
   };
+  // under water the bar slopes away gently (~1:5 to 1 m deep, then on down to the bed over 10-15 m), a little
+  // steeper on the side of the main current; past the tip the shoal runs on twice as gently, narrowing to a point
+  const tbDepth = (d) => 1.0 * sm(0, 5, d) + 2.15 * sm(3.5, 15, d);
   const tbHeight = (x, z) => {
-    const q = tbQ(x, z), [s] = tbFrame(x, z);
-    if (q > 3.4 && tbFrame(x, z)[0] < 1) return -99;
-    const crest = 0.1 + 0.34 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 0.9) + 0.04 * N.n2(x * 0.4, z * 0.4);
-    const hDry = q < 1 ? crest * (1 - q * q) + 0.015 * N.n2(x * 1.3, z * 1.3) : -0.52 * sm(1, 2.1, q) - 2.6 * sm(2.2, 3.4, q);
-    // the bar goes on under water past its tip as a shoal ~10 m long
-    const [s1, n1] = tbFrame(x, z), wa = Math.max(tbHalfW(Math.min(1, Math.max(0, s1))) * 1.6, 2.4);
-    const qa = Math.hypot(n1 / wa, s1 > 1 ? (s1 - 1) * TB.len / 10 : s1 < 0 ? -s1 * TB.len / 4 : 0);
-    const hA = qa > 1.8 ? -99 : -0.3 - 0.35 * sm(0.3, 1, qa) - 2.5 * sm(1, 1.8, qa);
-    return Math.max(hDry, hA);
+    const [s, n] = tbFrame(x, z);
+    if (s < -0.3 || s > 2.2) return -99;
+    const w = tbW(x, z, s, n), nn = n + 0.35 * N.n2(x * 0.33, z * 0.33 + 1.7);
+    const lat = Math.abs(nn) - w, lon = s > 1 ? (s - 1) * TB.len : s < 0 ? -s * TB.len * 0.7 : 0;
+    const q = Math.hypot(nn / w, s < 0 ? -s * TB.len / 6 : s > 1 ? (s - 1) * TB.len / 2.2 : 0);
+    if (q < 1) {
+      const crest = 0.1 + 0.34 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 0.9) + 0.04 * N.n2(x * 0.4, z * 0.4);
+      return crest * (1 - q * q) + 0.015 * N.n2(x * 1.3, z * 1.3);
+    }
+    const side = Math.sign(nn * TB.curl) > 0 ? 0.8 : 1.25; // inside of the curl gentler
+    const d = Math.hypot(Math.max(0, lat) * side, lon * (s > 1 ? 0.5 : 1));
+    if (d > 16) return -99;
+    return -tbDepth(d) + 0.01 * N.n2(x * 1.3, z * 1.3);
   };
   U.uLee.value.set(TB.ox, TB.oz, TB.dx, TB.dz); U.uLeeS.value.set(TB.len, TB.w0, TB.curl);
-  const onBar = (x, z, m = 1.5) => tbQ(x, z) < m && tbFrame(x, z)[0] > 0.22;
+  const onBar = (x, z, m = 1.5) => tbFrame(x, z)[0] > 0.22 && (tbQ(x, z) < m || tbHeight(x, z) > -1.1); // the bar and its shoal
   // cliff on the outer bank of the downstream bend, facing the island
   const cliffSide = -SG, cliffX = 165 + R() * 30, cliffL = 100, cxa = cliffX - cliffL / 2, cxb = cliffX + cliffL / 2;
   // sand bar on the inner (opposite) bank, a little downstream of the island
@@ -182,13 +188,16 @@ export function buildWorld(seed, Q) {
     {
       const [cx, cz] = sbC(), dx = (x - cx) / sbL, dz = (z - cz) / sbW;
       const e2 = dx * dx + dz * dz + 0.15 * N.n2(x * 0.08, z * 0.08);
-      if (e2 < 3) h = Math.max(h, 0.26 - 0.58 * e2 + 0.04 * N.n2(x * 0.3, z * 0.3));
+      if (e2 < 9) h = Math.max(h, 0.26 - 0.58 * e2 + 0.04 * N.n2(x * 0.3, z * 0.3)); // (no cut-off: it runs down into the bed)
     }
     const e = islandE(x, z);
-    if (e < 1.6) {
+    if (e < 2.0) {
       const core = 0.42 + 2.4 * Math.max(0, 1 - e * e) * (0.75 + 0.25 * N.n2(x * 0.07, z * 0.07)) + 0.35 * N.fbm(x * 0.08, z * 0.08, 2) * Math.max(0, 1 - e);
       const s = sm(0.82, 1.32, e);
-      h = Math.max(h, core * (1 - s) - 3.1 * s);
+      let hi = core * (1 - s) - 3.1 * s;
+      // under water the island shelves away gently: a third of the old slope at the shore, then a wide skirt
+      if (hi < 0) { const s2 = sm(0.82, 1.95, e); hi = Math.min(core * (1 - s2) - 3.1 * s2, 0.3 * hi); }
+      h = Math.max(h, hi);
     }
     { // smooth union with the tail bar: the shore runs round into the bar in a curve, no shoulders
       const hb = tbHeight(x, z), k = 0.55, dd = Math.max(k - Math.abs(h - hb), 0) / k;
@@ -235,7 +244,7 @@ export function buildWorld(seed, Q) {
     return tmp.lerp(cU, sm(-0.05, -0.25, h)).clone();
   };
   // fine-grid patch over the island and its tail bar (shoreline, wet band and grass edge without grid steps)
-  const IP = { x0: -45, x1: 62, z0: zc0 - 33, z1: zc0 + 33, step: Q.terr >= 180 ? 0.5 : 0.8 };
+  const IP = { x0: -45, x1: 84, z0: zc0 - 33, z1: zc0 + 33, step: Q.terr >= 180 ? 0.5 : 0.8 };
   const inIslePatch = (x, z) => x > IP.x0 + 4 && x < IP.x1 - 4 && z > IP.z0 + 4 && z < IP.z1 - 4;
   const inCliffPatch = (x, z) => { if (x < cxa + 10 || x > cxb - 10) return false; const zc = mz(x), dd = (z - zc) * cliffSide, hw = hwAt(x); return dd > hw - 3 && dd < hw + 18; };
   for (let i = 0; i < tp.count; i++) {

@@ -141,7 +141,7 @@ export function createDucks(world, Q, scene) {
   const atBar = (s0, side, qq) => { const ax = B.ox + B.dx * s0 * B.len, az = B.oz + B.dz * s0 * B.len, off = side * qq * B.halfW(s0) + B.curl * s0 * s0; return new V(ax - B.dz * off, 0, az + B.dx * off); };
   // a resting place right at the sand of the bar (shallow water on its calm sides)
   const barRoost = (side) => {
-    for (let t = 0; t < 200; t++) { const sd = side || (R() < 0.5 ? -1 : 1), c = atBar(0.3 + R() * 0.62, sd, 1.35 + R() * 0.35); if (wet(c.x, c.z, -0.2, -0.55)) { c.kind = 'bar'; c.side = sd; return c; } }
+    for (let t = 0; t < 200; t++) { const sd = side || (R() < 0.5 ? -1 : 1), c = atBar(0.3 + R() * 0.62, sd, 1.4 + R() * 1.2); if (wet(c.x, c.z, -0.2, -0.55)) { c.kind = 'bar'; c.side = sd; return c; } }
     return null;
   };
   const isleWater = () => {
@@ -172,7 +172,7 @@ export function createDucks(world, Q, scene) {
         if (r < 0.65 && t < 250) { c = barRoost(); kind = 'bar'; if (!c) continue; }
         else if (t < 400) { kind = 'reed'; const L = reedAll; if (!L.length) continue; c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue; }
         else { kind = 'shore'; c = shoreNear(from, 60); if (!c) continue; }
-      } else if (r < 0.42) { kind = 'isle'; c = isleWater(); if (!c) continue; }
+      } else if (r < 0.37) { kind = 'isle'; c = isleWater(); if (!c) continue; }
       else if (r < 0.62) { kind = 'reed'; const rp = reedAll[Math.floor(R() * reedAll.length)]; if (!rp || Math.abs(rp.x) > 95) continue; c = offReed(rp); if (!c) continue; }
       else {
         kind = r < 0.9 ? 'bank' : 'open';
@@ -405,9 +405,7 @@ export function createDucks(world, Q, scene) {
         k.viaT = 0.5 + R() * 0.3; k.via = null;
         const gx = goal.x - k.p.x, gz = goal.z - k.p.z, gd = Math.hypot(gx, gz);
         if (gd > 2.5 && !clear(k.p.x, k.p.z, gx / gd, gz / gd, gd)) {
-          const tr = leader.trail;
-          for (let j = tr.length - 1; j >= Math.max(0, tr.length - 40); j -= 1) { const q2 = tr[j], dx = q2.x - k.p.x, dz = q2.z - k.p.z, dd = Math.hypot(dx, dz); if (dd < 0.8 || dd > 30) continue; if (clear(k.p.x, k.p.z, dx / dd, dz / dd, dd)) { k.via = q2; break; } }
-          if (!k.via) { field(sleeping ? leader.home : leader.p, t); k.via = wayOut(k.p); }
+          field(sleeping ? leader.home : leader.p, t); k.via = wayOut(k.p);
         }
       }
       if (k.via) goal = k.via.clone();
