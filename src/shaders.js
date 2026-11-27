@@ -14,7 +14,7 @@ export const U = {
   uSnk: { value: Array.from({ length: 72 }, () => new THREE.Vector4(0, 0, -100, 0)) }, uSnB: { value: Array.from({ length: 3 }, () => new THREE.Vector4(0, 0, 0, 0)) },
   uRip: { value: [new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0), new THREE.Vector4(0, 0, -99, 0)] },
   uCam: { value: new THREE.Vector3() }, uMist: { value: 0 }, uFogCol: { value: new THREE.Color() },
-  uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uHaze: { value: new THREE.Color() }, uMtnK: { value: new THREE.Vector3(1, 1, 1) }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
+  uFF: { value: 0 }, uBolt: { value: new THREE.Vector4(0, 0, 0, 0) }, uCampOn: { value: 0 }, uCampA: { value: new THREE.Vector4(0, 0, 999, 999) }, uCampB: { value: new THREE.Vector4(1, 0, 1, 1) }, uOpen: { value: 1 }, uRainbow: { value: 0 }, uHaze: { value: new THREE.Color() }, uMtnK: { value: new THREE.Vector3(1, 1, 1) }, uLee: { value: new THREE.Vector4(0, 0, 1, 0) }, uLeeS: { value: new THREE.Vector3(1, 1, 0) }, uSunOccM: { value: 1 }, uSunOcc: { value: 1 }, uMoonOcc: { value: 1 }, uFogNear: { value: 100 }, uFogFar: { value: 6000 }, uFogSky: { value: 0 }, uSkyFog: { value: new THREE.Color() }, uDust: { value: 0 }, uPx: { value: 1 }, uDepthBox: { value: new THREE.Vector4(-480, -240, 960, 480) },
   uRiver: { value: new THREE.Vector4(0, 0, 0, 40) }, // meander a1,f1(phase),.., halfwidth
 };
 
@@ -290,7 +290,7 @@ export function waterMaterial() {
     fragmentShader: /* glsl */`
       #include <fog_pars_fragment>
       uniform sampler2D tNoise, tWaterN, tDepth, tHzn; uniform vec2 uCloudOff, uWindDir; uniform float uCover, uDark, uSunVis, uTime, uRain, uWind, uMoonVis, uFlash, uNight, uSunOcc, uMoonOcc;
-      uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog, uMtnK; uniform float uFogSky;
+      uniform vec3 uSunDir, uMoonDir, uZen, uHor, uGlow, uSunCol, uCloudLit, uCloudDark, uAmb, uCam, uSkyFog, uMtnK; uniform float uFogSky; uniform vec4 uLee; uniform vec3 uLeeS;
       uniform vec4 uRip[4]; uniform vec4 uDuck[6]; uniform vec4 uSnk[72]; uniform vec4 uSnB[3]; uniform vec4 uDepthBox, uRiver, uBolt;
       varying vec3 vWp;
       ${CLOUD}${SKYFN}
@@ -309,7 +309,11 @@ export function waterMaterial() {
         vec3 n1 = texture2D(tWaterN, q*0.045 + vec2(uTime*sp, 0.0)).xyz*2.0 - 1.0;
         vec3 n2 = texture2D(tWaterN, vWp.xz*0.11 + vec2(0.3,-0.6)*uTime*sp*1.3 + uWindDir*uTime*0.01).xyz*2.0 - 1.0;
         vec3 n3 = texture2D(tWaterN, q*0.013 + vec2(uTime*0.012, 0.0)).xyz*2.0 - 1.0;
-        vec2 nxy = n1.xy*0.55 + n2.xy*0.35*(0.5+uWind) + n3.xy*0.5;
+        // calm wake behind the island and its tail bar: the current's streaks fade, the water is smoother
+        vec2 lp = vWp.xz - uLee.xy; float la = dot(lp, uLee.zw), lb = -lp.x * uLee.w + lp.y * uLee.z;
+        float lee = smoothstep(uLeeS.x * 0.05, uLeeS.x * 0.3, la) * (1.0 - smoothstep(uLeeS.x + 10.0, uLeeS.x + 38.0, la))
+                  * (1.0 - smoothstep(uLeeS.y + 2.5 + la * 0.1, uLeeS.y + 8.0 + la * 0.18, abs(lb - uLeeS.z * clamp(la / uLeeS.x, 0.0, 1.0))));
+        vec2 nxy = n1.xy*0.55*(1.0 - 0.65*lee) + n2.xy*0.35*(0.5+uWind)*(1.0 - 0.25*lee) + n3.xy*0.5*(1.0 - 0.6*lee);
         // rain ripples
         if (uRain > 0.01) {
           // each drop's ring stays within 0.75 m, so the 3x3 neighbourhood sees every ring: no cell seams

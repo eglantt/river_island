@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.39 alpha';
+const VERSION = '0.0.40 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -127,7 +127,7 @@ function build() {
   applyRenderQuality();
 }
 
-const walkable = (x, z) => world.H(x, z) > 0.08 && world.islandE(x, z) < 1.25 && !world.trunks.some(([tx, tz, r]) => (tx - x) ** 2 + (tz - z) ** 2 < r * r) && !camp.blocks(x, z);
+const walkable = (x, z) => world.H(x, z) > 0.08 && (world.islandE(x, z) < 1.25 || world.bar.q(x, z) < 1.2) && !world.trunks.some(([tx, tz, r]) => (tx - x) ** 2 + (tz - z) ** 2 < r * r) && !camp.blocks(x, z);
 
 // ---------- input ----------
 const keys = {}; let joy = null, look = null, rjoy = null; const jv = { x: 0, y: 0 }, rv = { x: 0, y: 0 }; let lookDX = 0, lookDY = 0, jumpReq = false;
@@ -335,6 +335,7 @@ function surface() {
   return 'grass';
 }
 let crouchT = false; // touch crouch / slow toggle
+const duckLast = new THREE.Vector3(); let duckStill = 0;
 let freeCam = false; const FC = { pos: new THREE.Vector3(), yaw: 0, pitch: 0 }; let upHeld = 0;
 function updatePlayer(dt) {
   if (freeCam) {
@@ -496,7 +497,9 @@ function frame(now) {
   world.group.children.forEach((o) => { if (o.material && o.material.side === THREE.BackSide) o.position.copy(camera.position); });
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
   // ducks, like the snakes, notice only the walking player
-  ducks.update(dt, gameTime, Object.assign({}, env, { cam: S.mode === 'walk' && !freeCam ? camera.position : null, quack: (x, z, n, k) => audio.quack(x, z, n, k) }));
+  // standing still for a moment or crouching lets the ducks come a little closer
+  { const mv = Math.hypot(P.pos.x - duckLast.x, P.pos.z - duckLast.z); duckLast.copy(P.pos); duckStill = mv < dt * 0.25 ? duckStill + dt : 0; }
+  ducks.update(dt, gameTime, Object.assign({}, env, { cam: S.mode === 'walk' && !freeCam ? camera.position : null, calm: P.crouch > 0.5 || duckStill > 1.5, quack: (x, z, n, k) => audio.quack(x, z, n, k) }));
   // snakes notice only the walking player; the free camera and the auto flight are invisible to them
   if (showMarks && freeCam) {
     if (!snakeMarks) { snakeMarks = snakes.list().map(() => { const m = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.7, 12).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xff3020, depthTest: false })); m.renderOrder = 99; scene.add(m); return m; }); }

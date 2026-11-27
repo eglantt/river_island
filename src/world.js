@@ -84,6 +84,40 @@ export function buildWorld(seed, Q) {
     const u = x * ca + (z - zc0) * sa, v = -x * sa + (z - zc0) * ca;
     return Math.hypot(u / irx, v / irz) + 0.13 * N.n2(x * 0.055 + 11, z * 0.055) + 0.05 * N.n2(x * 0.19, z * 0.19);
   }
+  // ---------- tail bar: sand settles in the calm wake downstream of the island (the current runs toward +x) ----------
+  // a tongue of sand from the island's tail along the current, 6-8 m wide at the root, tapering, the end curled a
+  // little; a shallow apron around it. Own random stream so the rest of the world keeps its layout.
+  const RB = rng(seed ^ 0x7a11);
+  const TB = (() => {
+    const sl = (mz(2) - mz(-2)) / 4, ln = Math.hypot(1, sl), dx = 1 / ln, dz = sl / ln;
+    let tx = 0, tz = zc0;
+    for (let k = 0; k < 600; k++) { if (islandE(tx, tz) > 0.97) break; tx += dx * 0.1; tz += dz * 0.1; }
+    const L = 16 + RB() * 8, w0 = 3.1 + RB() * 0.8, curl = (RB() < 0.5 ? -1 : 1) * (1.2 + RB() * 1.6), root = 5;
+    return { tx, tz, dx, dz, L, w0, curl, root, ox: tx - dx * root, oz: tz - dz * root, len: L + root };
+  })();
+  // bar frame: s = 0 at the root (inside the island) .. 1 at the tip; n = signed lateral offset from the (curled) axis
+  const tbFrame = (x, z) => {
+    const px = x - TB.ox, pz = z - TB.oz, a = px * TB.dx + pz * TB.dz, b = -px * TB.dz + pz * TB.dx, s = a / TB.len;
+    const sc = Math.max(0, Math.min(1, s));
+    return [s, b - TB.curl * sc * sc, a];
+  };
+  // metric: < 1 dry sand, 1..2.3 shallow apron, then fades into the river bed
+  const tbHalfW = (s) => TB.w0 * Math.pow(Math.max(0.1, 1 - Math.max(0, s)), 0.62) + 0.35;
+  const tbQ = (x, z) => {
+    const [s, n] = tbFrame(x, z);
+    const w = tbHalfW(Math.min(1, s)) * (1 + 0.12 * N.n2(x * 0.21 + 3.3, z * 0.21));
+    const ds = s < 0 ? -s * TB.len / 6 : s > 1 ? (s - 1) * TB.len / 1.6 : 0;
+    return Math.hypot((n + 0.35 * N.n2(x * 0.33, z * 0.33 + 1.7)) / w, ds);
+  };
+  const tbHeight = (x, z) => {
+    const q = tbQ(x, z), [s] = tbFrame(x, z);
+    if (q > 3.4) return -99;
+    const crest = 0.12 + 0.3 * Math.pow(Math.max(0, 1 - Math.max(0, s)), 0.6) + 0.04 * N.n2(x * 0.4, z * 0.4);
+    if (q < 1) return crest * (1 - q * q) + 0.015 * N.n2(x * 1.3, z * 1.3);
+    return -0.52 * sm(1, 2.1, q) - 2.6 * sm(2.2, 3.4, q);
+  };
+  U.uLee.value.set(TB.ox, TB.oz, TB.dx, TB.dz); U.uLeeS.value.set(TB.len, TB.w0, TB.curl);
+  const onBar = (x, z, m = 1.5) => tbQ(x, z) < m && tbFrame(x, z)[0] > 0.22;
   // cliff on the outer bank of the downstream bend, facing the island
   const cliffSide = -SG, cliffX = 165 + R() * 30, cliffL = 100, cxa = cliffX - cliffL / 2, cxb = cliffX + cliffL / 2;
   // sand bar on the inner (opposite) bank, a little downstream of the island
@@ -119,6 +153,7 @@ export function buildWorld(seed, Q) {
       const e2 = dx * dx + dz * dz + 0.15 * N.n2(x * 0.08, z * 0.08);
       if (e2 < 3) h = Math.max(h, 0.26 - 0.58 * e2 + 0.04 * N.n2(x * 0.3, z * 0.3));
     }
+    h = Math.max(h, tbHeight(x, z));
     const e = islandE(x, z);
     if (e < 1.6) {
       const core = 0.42 + 2.4 * Math.max(0, 1 - e * e) * (0.75 + 0.25 * N.n2(x * 0.07, z * 0.07)) + 0.35 * N.fbm(x * 0.08, z * 0.08, 2) * Math.max(0, 1 - e);
@@ -146,7 +181,7 @@ export function buildWorld(seed, Q) {
     const nz = N.n2(x * 0.09, z * 0.09), bd = bankDist(x, z);
     if (h < -1.2) tmp.copy(cBed).lerp(cBedDeep, sm(-1.2, -3, h));
     else if (h < -0.15) tmp.copy(cWet).lerp(cBed, sm(-0.15, -1.2, h));
-    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
+    else if (h < 0.32 + nz * 0.12 || sbE(x, z) < 1.8 || (tbQ(x, z) < 1.25 && tbFrame(x, z)[0] > 0.3)) tmp.copy(cSand).lerp(cWet, sm(0.15, -0.15, h)); // the sand bar stays sand (no blocky green on the coarse grid)
     else {
       tmp.copy(cGrass).lerp(nz > 0 ? cGrass2 : cGrass3, Math.abs(nz) * 0.8);
       tmp.lerp(cDirt, sm(0.35, 0.8, sl) * 0.8);
@@ -600,9 +635,9 @@ export function buildWorld(seed, Q) {
     }
   }
   // faceted rock: displaced blob chopped by random planes (flat faces, sharp edges), flattened top
-  function rockGeo(c, r, flat) {
+  function rockGeo(c, r, flat, RR = R) {
     const g = new THREE.IcosahedronGeometry(1, 2), P = g.attributes.position, v = new THREE.Vector3();
-    const planes = Array.from({ length: 6 + Math.floor(R() * 4) }, () => { const nn = new THREE.Vector3(R() - 0.5, (R() - 0.2) * 1.2, R() - 0.5).normalize(); return [nn, 0.6 + R() * 0.3]; });
+    const planes = Array.from({ length: 6 + Math.floor(RR() * 4) }, () => { const nn = new THREE.Vector3(RR() - 0.5, (RR() - 0.2) * 1.2, RR() - 0.5).normalize(); return [nn, 0.6 + RR() * 0.3]; });
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i);
       v.multiplyScalar(1 + 0.18 * N.n2(v.x * 1.3 + c.x, v.z * 1.3 + c.z + v.y));
@@ -642,6 +677,20 @@ export function buildWorld(seed, Q) {
       const r = 0.06 + R() * 0.14, cc = new THREE.Vector3(c[0], H(c[0], c[1]) - r * 0.1, c[1]);
       rockAcc.add(rockGeo(cc, r, 0.5), rockCol(cB2), () => 0); rockList.push([c[0], c[1], r * 1.2]);
     }
+    // stones on the tail bar: a few washed cobbles along it, some in a small group at the waterline, one or two bigger
+    const cStone = C('#8f887c'), cStone2 = C('#6d675f');
+    for (let i = 0, made = 0; i < 400 && made < 16; i++) {
+      const s0 = 0.12 + RB() * 0.95, side = RB() < 0.5 ? -1 : 1, nn = side * RB() * 1.25;
+      const ax = TB.ox + TB.dx * s0 * TB.len, az = TB.oz + TB.dz * s0 * TB.len, off = nn * tbHalfW(s0) + TB.curl * s0 * s0;
+      const x = ax - TB.dz * off, z = az + TB.dx * off, h = H(x, z);
+      if (h < -0.35 || islandE(x, z) < 1.0) continue;
+      if (rockList.some(([rx, rz, rr]) => Math.hypot(rx - x, rz - z) < rr + 0.25)) continue;
+      const big = made < 2, r = big ? 0.3 + RB() * 0.2 : 0.07 + RB() * 0.16;
+      const cc = new THREE.Vector3(x, h - r * (big ? 0.3 : 0.15), z);
+      rockAcc.add(rockGeo(cc, r, 0.45 + RB() * 0.2, RB), rockCol(RB() < 0.5 ? cStone : cStone2), () => 0); rockList.push([x, z, r * 1.2]);
+      if (big) trunks.push([x, z, r * 0.9]);
+      made++;
+    }
   }
   // driftwood on the sand bar and a fallen tree reaching into the river upstream
   {
@@ -653,6 +702,35 @@ export function buildWorld(seed, Q) {
       const p0 = new THREE.Vector3(x - Math.cos(a) * L / 2, h + r * 0.7, z - Math.sin(a) * L / 2), p1 = new THREE.Vector3(x + Math.cos(a) * L / 2, h + r * 0.6, z + Math.sin(a) * L / 2);
       trunkAcc.add(limbGeo(p0, p1, r, r * 0.7, 6, 2), (v) => tmp.copy(cDw).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 4, v.z * 4)), () => 0);
       if (R() < 0.6) { const m = p0.clone().lerp(p1, 0.35 + R() * 0.3); trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3((R() - 0.5) * 0.9, 0.2 + R() * 0.4, (R() - 0.5) * 0.9)), r * 0.45, r * 0.2, 4, 1), () => cDw, () => 0); }
+    }
+    { // washed-up wood on the tail bar: a barkless trunk lying along the current, its thick end upstream, and branches
+      const at = (s0, nn) => { const ax = TB.ox + TB.dx * s0 * TB.len, az = TB.oz + TB.dz * s0 * TB.len, off = nn * tbHalfW(s0) + TB.curl * s0 * s0; return [ax - TB.dz * off, az + TB.dx * off]; };
+      const cDw3 = C('#a39785');
+      { const s0 = 0.45 + RB() * 0.25, nn = (RB() < 0.5 ? -1 : 1) * (0.35 + RB() * 0.35), [x, z] = at(s0, nn);
+        const a = Math.atan2(TB.dz, TB.dx) + (RB() - 0.5) * 0.7, L = 3.2 + RB() * 1.6, r = 0.15 + RB() * 0.06;
+        const hA = Math.max(H(x - Math.cos(a) * L / 2, z - Math.sin(a) * L / 2), -0.2), hB = Math.max(H(x + Math.cos(a) * L / 2, z + Math.sin(a) * L / 2), -0.2);
+        const p0 = new THREE.Vector3(x - Math.cos(a) * L / 2, hA + r * 0.75, z - Math.sin(a) * L / 2), p1 = new THREE.Vector3(x + Math.cos(a) * L / 2, hB + r * 0.5, z + Math.sin(a) * L / 2);
+        // two slightly bent pieces, weathered grey-brown with lengthwise cracks and darker wet underside
+        const side = new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)), pm = p0.clone().lerp(p1, 0.45).addScaledVector(side, (RB() - 0.5) * 0.5); pm.y += 0.04;
+        const wood = (v, nrm) => tmp.copy(cDw3).multiplyScalar(0.62 + 0.22 * N.n2(v.x * 3.1, v.z * 3.1) + 0.14 * Math.abs(N.n2((v.x * Math.cos(a) + v.z * Math.sin(a)) * 1.2, (v.y + v.x * Math.sin(a) - v.z * Math.cos(a)) * 26))).lerp(cDw2, nrm && nrm.y < -0.2 ? 0.5 : 0);
+        trunkAcc.add(limbGeo(p0, pm, r, r * 0.8, 9, 3), wood, () => 0);
+        trunkAcc.add(limbGeo(pm, p1, r * 0.8, r * 0.5, 9, 3), wood, () => 0);
+        // root plate remains at the thick end: thick, uneven stubs
+        for (let k = 0; k < 6; k++) { const b = a + Math.PI + (RB() - 0.5) * 2.6, up = (RB() - 0.25) * 0.5, ln = 0.3 + RB() * 0.55;
+          const e = new THREE.Vector3(p0.x + Math.cos(b) * ln, Math.max(p0.y + up, hA + 0.03), p0.z + Math.sin(b) * ln);
+          trunkAcc.add(limbGeo(p0.clone().addScaledVector(new THREE.Vector3(Math.cos(a), 0, Math.sin(a)), 0.1), e, r * (0.45 + RB() * 0.25), r * 0.12, 5, 2), wood, () => 0); }
+        for (let k = 0; k < 2; k++) { const m = p0.clone().lerp(p1, 0.4 + k * 0.25), b = a + (k ? 1 : -1) * (0.6 + RB() * 0.5);
+          trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3(Math.cos(b) * (0.3 + RB() * 0.4), 0.1 + RB() * 0.2, Math.sin(b) * (0.3 + RB() * 0.4))), r * 0.38, r * 0.14, 5, 1), wood, () => 0); }
+        trunks.push([x, z, 0.35]); rockList.push([x, z, L / 2]);
+      }
+      for (let k = 0; k < 3; k++) { // branches, one of them half in the water at the edge
+        const s0 = 0.2 + RB() * 0.7, nn = (RB() < 0.5 ? -1 : 1) * (k === 0 ? 0.95 : RB() * 0.8), [x, z] = at(s0, nn);
+        const a = RB() * 6.28, L = 1.1 + RB() * 1.4, r = 0.04 + RB() * 0.04;
+        const p0 = new THREE.Vector3(x - Math.cos(a) * L / 2, 0, z - Math.sin(a) * L / 2), p1 = new THREE.Vector3(x + Math.cos(a) * L / 2, 0, z + Math.sin(a) * L / 2);
+        p0.y = Math.max(H(p0.x, p0.z), -0.12) + r * 0.8; p1.y = Math.max(H(p1.x, p1.z), -0.12) + r * 0.6;
+        trunkAcc.add(limbGeo(p0, p1, r, r * 0.5, 5, 2), (v) => tmp.copy(k ? cDw : cDw2).multiplyScalar(0.8 + 0.25 * N.n2(v.x * 6, v.z * 6)), () => 0);
+        const m = p0.clone().lerp(p1, 0.5); trunkAcc.add(limbGeo(m, m.clone().add(new THREE.Vector3((RB() - 0.5) * 0.6, 0.1 + RB() * 0.15, (RB() - 0.5) * 0.6)), r * 0.5, r * 0.2, 4, 1), () => cDw, () => 0);
+      }
     }
     const fx = -60 - R() * 40, fside = -SG, zc = mz(fx), hw = hwAt(fx);
     const base = new THREE.Vector3(fx - 2, 0, zc + fside * (hw + 5)); base.y = H(base.x, base.z) + 0.2;
@@ -729,6 +807,21 @@ export function buildWorld(seed, Q) {
       return null;
     });
     meshes.grass.receiveShadow = !!Q.shadows;
+    // a few tussocks where the tail bar joins the island (the rest of the bar is bare sand)
+    { let cl = null, left = 0;
+      const ok = (x, z) => { const [s0] = tbFrame(x, z); return H(x, z) > 0.14 && tbQ(x, z) < 0.9 && s0 > 0.12 && s0 < 0.42 && islandE(x, z) > 0.98; };
+      meshes.tbGrass = instanced(g, mat, Math.round(Q.grass * 0.012), (d) => {
+        for (let t = 0; t < 30; t++) {
+          if (!cl || left <= 0) { const s0 = 0.14 + RB() * 0.26, nn = (RB() * 2 - 1) * 0.8, ax = TB.ox + TB.dx * s0 * TB.len, az = TB.oz + TB.dz * s0 * TB.len, off = nn * tbHalfW(s0) + TB.curl * s0 * s0, x = ax - TB.dz * off, z = az + TB.dx * off; if (!ok(x, z)) continue; cl = [x, z]; left = 6 + Math.floor(RB() * 10); }
+          const a = RB() * 6.28, rr = Math.sqrt(RB()) * 0.2, x = cl[0] + Math.cos(a) * rr, z = cl[1] + Math.sin(a) * rr; left--;
+          if (!ok(x, z)) continue;
+          d.position.set(x, H(x, z) - 0.03, z); d.rotation.set((RB() - 0.5) * 0.3, RB() * 6.28, (RB() - 0.5) * 0.3);
+          d.scale.set(0.8 + RB() * 0.6, (0.25 + RB() * 0.35) * (1 - rr * 1.8), 1);
+          return tint.setHSL(0.18 + RB() * 0.05, 0.45, 0.42 + RB() * 0.14).multiplyScalar(2.2);
+        }
+        return null;
+      });
+    }
     // sparse tussocks on the sand bar, in irregular patches shaped by noise
     { const [cx, cz] = sbC(); let cl = null, left = 0;
       const ok = (x, z) => { const h = H(x, z), e = sbE(x, z); return h > 0.1 && e < 1.4 && N.n2(x * 0.16 + 5.3, z * 0.16) * 0.8 + 0.45 * N.n2(x * 0.55, z * 0.55 + 2) - 0.6 * e > -0.3; };
@@ -783,7 +876,7 @@ export function buildWorld(seed, Q) {
     // clump centres: island shoreline and both river banks
     for (let t = 0; t < 4000 && reedClusters.length < 26; t++) {
       const u = (R() * 2 - 1) * irx * 1.4, v = (R() * 2 - 1) * irz * 1.4, x = u * ca - v * sa, z = zc0 + u * sa + v * ca, h = H(x, z);
-      if (h < 0.15 && h > -0.3) reedClusters.push([x, z, 1.2 + R() * 2.2]);
+      if (h < 0.15 && h > -0.3 && !onBar(x, z, 3.2)) reedClusters.push([x, z, 1.2 + R() * 2.2]);
     }
     for (let t = 0; t < 6000 && reedClusters.length < 70; t++) {
       const x = (R() * 2 - 1) * 260, z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) + (R() * 2 - 1) * 9), h = H(x, z);
@@ -830,7 +923,7 @@ export function buildWorld(seed, Q) {
           const i = arcs[Math.floor(R() * arcs.length)], off = (R() + R() + R() - 1.5) * 4.2, fi = i + off, ang = fi / NA * Math.PI * 2, bd = bands[((Math.round(fi) % NA) + NA) % NA];
           if (!bd) continue;
           const dd = bd[0] + Math.pow(R(), 0.8) * (bd[1] - bd[0]), x = Math.cos(ang) * dd, z = zc0 + Math.sin(ang) * dd, h = H(x, z);
-          if (h > 0.2 || h < -0.6) continue;
+          if (h > 0.2 || h < -0.6 || onBar(x, z, 2.7)) continue;
           d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.14, R() * 6.28, (R() - 0.5) * 0.14); const tap = Math.max(0.35, 1 - Math.pow(Math.abs(off) / 6.3, 2) * 0.75), edge = Math.min(1, (dd - bd[0]) / 1.2 + 0.45);
           if (R() > Math.max(0.25, tap)) continue;
           d.scale.set(1 + R() * 0.6, (1.6 + R() * 1.4) * tap * edge * (0.7 + R() * 0.45), 1);
@@ -859,13 +952,13 @@ export function buildWorld(seed, Q) {
           // dense clumps along the shores
           const c = reedClusters[Math.floor(R() * reedClusters.length)], rr = c[2] * Math.sqrt(-2 * Math.log(R() + 1e-6)) * 0.55, an = R() * 6.283;
           x = c[0] + Math.cos(an) * rr; z = c[1] + Math.sin(an) * rr;
-          const h = H(x, z); if (h > 0.3 || h < -0.5) continue;
+          const h = H(x, z); if (h > 0.3 || h < -0.5 || onBar(x, z, 2.7)) continue;
           d.position.set(x, h - 0.05, z); d.rotation.set((R() - 0.5) * 0.15, R() * 6.28, (R() - 0.5) * 0.15); d.scale.set(1 + R() * 0.8, 1.3 + R() * 1.3, 1);
           return white;
         }
         if (R() < 0.45) { const u = (R() * 2 - 1) * irx * 1.4, v = (R() * 2 - 1) * irz * 1.4; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
         else { x = (R() * 2 - 1) * 300; z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) + (R() * 2 - 1) * 10); }
-        const h = H(x, z); if (h > 0.25 || h < -0.45) continue;
+        const h = H(x, z); if (h > 0.25 || h < -0.45 || onBar(x, z, 2.7)) continue;
         const clump = N.n2(x * 0.3, z * 0.3); if (clump < -0.15) continue;
         d.position.set(x, h - 0.05, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(1 + R(), 1.0 + R() * 1.1, 1);
         if (reedPts.length < 120 && R() < 0.2) reedPts.push(new THREE.Vector3(x, Math.max(h, 0) + 0.6, z));
@@ -883,7 +976,7 @@ export function buildWorld(seed, Q) {
         let x, z;
         if (near) { const u = (R() * 2 - 1) * irx * 1.5, v = (R() * 2 - 1) * irz * 1.6; x = u * ca - v * sa; z = zc0 + u * sa + v * ca; }
         else { x = (R() * 2 - 1) * 200; z = mz(x) + (R() < 0.5 ? -1 : 1) * (hwAt(x) - 1 - R() * 9); }
-        const h = H(x, z); if (h > -0.14 || h < -0.75) continue;
+        const h = H(x, z); if (h > -0.14 || h < -0.75 || onBar(x, z, 2.0)) continue;
         if (N.n2(x * 0.25, z * 0.25) < -0.2) continue;
         const L = -h * (0.6 + R() * 0.33);
         d.position.set(x, h, z); d.rotation.set(0, R() * 6.28, 0); d.scale.set(0.8 + R() * 0.8, L, 1);
@@ -1185,7 +1278,7 @@ export function buildWorld(seed, Q) {
         for (let t = 0; t < 40; t++) {
           const s = spots[Math.floor(R() * spots.length)], rad = s[2];
           const gx = (R() + R() + R() - 1.5) * rad * 0.9, gz = (R() + R() + R() - 1.5) * rad * 0.7, x = s[0] + gx, z = s[1] + gz, h = H(x, z);
-          if (h > -0.22 || h < -1.6) continue;
+          if (h > -0.22 || h < -1.6 || onBar(x, z, 1.7)) continue;
           const r = 0.125 + R() * 0.075;
           if (pads.some(([a, b, rr]) => Math.hypot(a - x, b - z) < (r + rr) * 0.82)) continue;
           pads.push([x, z, r]);
@@ -1270,7 +1363,7 @@ export function buildWorld(seed, Q) {
   }
   if (!spawn) spawn = [0, zc0];
 
-  return { bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, Hmesh, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
+  return { bar: Object.assign({ q: tbQ, frame: tbFrame, halfW: tbHalfW }, TB), bakeImpostors: (r) => world_bake(r), disposeExtra: () => world_dispose(), group, meshes, sandbar: sbC(), hwAt, SG, N, cliff: { x: cliffX, side: cliffSide, top: cliffTop, off: cliffOff }, horizonEl, horizonMtn, mh, H, Hmesh, islandE, mz, HW, zc0, irx, irz, trunks, rockList, flowerPts, reedPts, spawn, onIsland };
 }
 
 export function disposeGroup(g) {

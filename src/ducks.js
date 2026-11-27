@@ -135,15 +135,36 @@ export function createDucks(world, Q, scene) {
     return null;
   };
   const sideOf = (p) => (p.z >= world.mz(p.x) ? 1 : -1);
+  // the island is the flock's favourite place: shallows round its shore, the backwaters at its reeds, the calm
+  // water by the tail bar; then the reeds and banks of the river, now and then open water
+  const B = world.bar;
+  const atBar = (s0, side, qq) => { const ax = B.ox + B.dx * s0 * B.len, az = B.oz + B.dz * s0 * B.len, off = side * qq * B.halfW(s0) + B.curl * s0 * s0; return new V(ax - B.dz * off, 0, az + B.dx * off); };
+  // a resting place right at the sand of the bar (shallow water on its calm sides)
+  const barRoost = (side) => {
+    for (let t = 0; t < 200; t++) { const sd = side || (R() < 0.5 ? -1 : 1), c = atBar(0.3 + R() * 0.62, sd, 1.35 + R() * 0.35); if (wet(c.x, c.z, -0.2, -0.55)) { c.kind = 'bar'; c.side = sd; return c; } }
+    return null;
+  };
+  const isleWater = () => {
+    for (let t = 0; t < 60; t++) {
+      if (R() < 0.25) { const c = atBar(0.2 + R() * 0.8, R() < 0.5 ? -1 : 1, 1.6 + R() * 1.4); if (wet(c.x, c.z, -0.2, -1.3)) return c; continue; }
+      const an = R() * 6.283, dx = Math.cos(an), dz = Math.sin(an); let d = 4;
+      while (d < 70 && H(dx * d, world.zc0 + dz * d) > -0.25) d += 0.5;
+      d += 0.5 + R() * 5; const c = new V(dx * d, 0, world.zc0 + dz * d);
+      if (wet(c.x, c.z, -0.25, -1.3)) return c;
+    }
+    return null;
+  };
   function pickSpot(from, o = {}) {
     const cam = o.cam, side0 = sideOf(from);
     for (let t = 0; t < 500; t++) {
       const r = R(); let c = null, kind;
-      if (o.night || r < 0.3) { // backwater at the reeds
-        kind = 'reed'; const L = o.night ? reedW : reedAll; if (!L.length) continue;
-        c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue;
-      } else {
-        kind = r < 0.8 ? 'bank' : 'open';
+      if (o.night) { // the tail bar about every other night, else a backwater at the reeds
+        if (r < 0.5) { c = barRoost(); kind = 'bar'; if (!c) continue; }
+        else { kind = 'reed'; const L = r < 0.75 ? reedAll.filter((p) => world.islandE(p.x, p.z) < 1.6) : reedW; if (!L.length) continue; c = offReed(L[Math.floor(R() * L.length)]); if (!c) continue; }
+      } else if (r < 0.4) { kind = 'isle'; c = isleWater(); if (!c) continue; }
+      else if (r < 0.6) { kind = 'reed'; c = offReed(reedAll[Math.floor(R() * reedAll.length)] || from); if (!c) continue; }
+      else {
+        kind = r < 0.9 ? 'bank' : 'open';
         const dir = Math.abs(from.x) > 90 && R() < 0.75 ? -Math.sign(from.x) : (R() < 0.5 ? -1 : 1), x = Math.max(-160, Math.min(160, from.x + dir * (20 + R() * 70)));
         const sd = R() < 0.3 ? -side0 : side0, hw = world.hwAt(x);
         const z = world.mz(x) + sd * (kind === 'bank' ? hw - 3 - R() * 7 : R() * hw * 0.75);
@@ -152,30 +173,41 @@ export function createDucks(world, Q, scene) {
       }
       if (Math.abs(c.x) > 170) continue;
       const dFrom = c.distanceTo(from);
-      if (dFrom < (o.near ? 6 : 22)) continue;
-      if (dFrom > (o.night ? 200 : 110)) continue;
-      // near the island no more often than anywhere else
-      if (world.islandE(c.x, c.z) < 2.0 && R() > (o.night ? 0 : 0.12)) continue;
-      if (cam && Math.hypot(c.x - cam.x, c.z - cam.z) < (o.night ? 35 : 24)) continue;
+      if (dFrom < (o.near || o.night ? 6 : 18)) continue;
+      if (dFrom > (o.night ? 200 : 75)) continue;
+      // never straight at the player
+      if (cam && Math.hypot(c.x - cam.x, c.z - cam.z) < (o.night ? 9 : 6)) continue;
       if (o.away && (c.x - from.x) * o.away.x + (c.z - from.z) * o.away.z < 0) continue;
-      c.kind = kind; return c;
+      c.kind = c.kind || kind; return c;
     }
     const sb = world.sandbar; const c = new V(sb[0] + 12, 0, sb[1]); c.kind = 'bank'; return c;
   }
   // straight-line water check (ducks never cut across land)
-  const clear = (x, z, dx, dz, len) => { for (let s = 1; s <= len; s += 1) if (H(x + dx * s, z + dz * s) > -0.2) return false; return true; };
+  const clear = (x, z, dx, dz, len) => { for (let s = 1; s <= len; s += 1) if (H(x + dx * s, z + dz * s) > -0.09) return false; return true; };
   // flee target: water 22-28 m from the player, roughly away from him, reachable in a straight line
   function fleeSpot(p, cam) {
-    const ax = p.x - cam.x, az = p.z - cam.z, a0 = Math.atan2(az, ax);
+    // water 10-12 m from the player, roughly away from him, reachable in a straight line, a few metres off any shore
+    const ax = p.x - cam.x, az = p.z - cam.z, a0 = Math.atan2(az, ax), want = 10.5 + R() * 1.5;
     let best = null, bs = -1e9;
     for (let t = 0; t < 48; t++) {
-      const a = a0 + (R() * 2 - 1) * 1.3, dx = Math.cos(a), dz = Math.sin(a);
-      let len = 0; while (len < 30 && H(p.x + dx * (len + 1), p.z + dz * (len + 1)) < -0.2) len++;
+      const a = a0 + (R() * 2 - 1) * 1.4, dx = Math.cos(a), dz = Math.sin(a);
+      let len = 0; while (len < 16 && H(p.x + dx * (len + 0.5), p.z + dz * (len + 0.5)) < -0.09 && Math.hypot(p.x + dx * len - cam.x, p.z + dz * len - cam.z) < want) len += 0.5;
       const q = new V(p.x + dx * len, 0, p.z + dz * len), dc = Math.hypot(q.x - cam.x, q.z - cam.z);
-      // open water is safer: the player cannot follow off the shore
-      let open = 15; for (let j = 0; j < 8; j++) { const b2 = j * 0.785, ex = Math.cos(b2), ez = Math.sin(b2); let r = 1; while (r < 15 && H(q.x + ex * r, q.z + ez * r) < 0) r += 1.5; open = Math.min(open, r); }
-      const sc = Math.min(dc, 26) - Math.abs(dc - 25) * 0.3 - Math.abs(a - a0) * 1.2 + open * 0.9;
+      let open = 6; for (let j = 0; j < 8; j++) { const b2 = j * 0.785, ex = Math.cos(b2), ez = Math.sin(b2); let r = 0.5; while (r < 6 && H(q.x + ex * r, q.z + ez * r) < 0) r += 0.5; open = Math.min(open, r); }
+      const sc = -Math.abs(dc - want) * 1.2 - Math.abs(Math.atan2(Math.sin(a - a0), Math.cos(a - a0))) * 1.0 + open * 0.7;
       if (sc > bs) { bs = sc; best = q; }
+    }
+    // cornered (a cove, the shallows by the bar): water further off, reached round the obstacle by the steering
+    if (!best || Math.hypot(best.x - cam.x, best.z - cam.z) < want - 2.5) {
+      let b2 = null, s2 = -1e9;
+      for (let t = 0; t < 120; t++) {
+        const a = R() * 6.283, r = 6 + R() * 16, x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
+        if (!wet(x, z, -0.25, -9)) continue;
+        const dc = Math.hypot(x - cam.x, z - cam.z); if (dc < 10) continue;
+        const sc = -Math.abs(dc - 13) - r * 0.25 + ((x - p.x) * ax + (z - p.z) * az) / Math.max(1e-3, Math.hypot(ax, az) * r) * 2;
+        if (sc > s2) { s2 = sc; b2 = new V(x, 0, z); }
+      }
+      if (b2) best = b2;
     }
     return best;
   }
@@ -183,7 +215,7 @@ export function createDucks(world, Q, scene) {
   const leader = {
     p: start.clone(), tgt: start.clone(), home: start.clone(), dir: new V(1, 0, 0), v: new V(), ph: R() * 10,
     st: 'linger', stT: 30 + R() * 120, sub: 0, pause: 0, nextPause: 20 + R() * 30, prog: 0, progP: start.clone(),
-    wary: 0, alert: 0, quackT: 60 + R() * 120, turnS: 1, visits: [],
+    wary: 0, alert: 0, quackT: 60 + R() * 120, turnS: 1, visits: [], trail: [],
   };
   const ducks = Array.from({ length: n }, (_, i) => {
     const a = R() * 6.28;
@@ -191,14 +223,14 @@ export function createDucks(world, Q, scene) {
       p: leader.p.clone().add(new V(Math.cos(a) * (0.5 + i * 0.4), 0, Math.sin(a) * (0.5 + i * 0.4))), v: new V(), yaw: R() * 6.28,
       off: new V((R() - 0.5) * 2, 0, (R() - 0.5) * 2), offT: new V(), offTime: 0, ph: R() * 100, stroke: R() * 6, sp: 1,
       act: 'swim', actT: 3 + R() * 10, actDur: 0, hYaw: 0, hYawT: 0, hPitch: 0, look: 2 + R() * 4,
-      pitch: 0, s: 1, upAmt: 0, stray: 0, roll: 0, tuck: 0, tuckDelay: R() * 40, tuckSide: R() < 0.5 ? -1 : 1,
+      pitch: 0, s: 1, upAmt: 0, stray: 0, roll: 0, viaT: 0, via: null, tuck: 0, tuckDelay: R() * 40, tuckSide: R() < 0.5 ? -1 : 1,
     };
   });
   let night = false;
   const mb = new THREE.Matrix4(), mh = new THREE.Matrix4(), mloc = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new V(), tv = new V(), fw = new V();
   const approach = (a, b, r) => a + (b - a) * Math.min(1, r);
   const DIRS = [0, 0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.45, -1.45, 1.9, -1.9, 2.4, -2.4, 3.0];
-  const go = (tgt, st) => { leader.tgt.copy(tgt); leader.home.copy(tgt); leader.st = st; leader.prog = 0; leader.progP.copy(leader.p); };
+  const go = (tgt, st) => { leader.tgtKind = tgt.kind; leader.tgtSide = tgt.side; leader.tgt.copy(tgt); leader.home.copy(tgt); leader.st = st; leader.prog = 0; leader.progP.copy(leader.p); };
 
   function update(dt, t, env) {
     dt = Math.min(dt, 0.1);
@@ -210,16 +242,16 @@ export function createDucks(world, Q, scene) {
     if (wantNight && !night) { night = true; if (L.st !== 'flee') go(pickSpot(L.p, { night: true, cam, near: true }), 'roost'); }
     if (!wantNight && night) { night = false; if (L.st === 'sleep' || L.st === 'roost') { L.st = 'wake'; L.stT = 25 + R() * 40; } }
     L.wary = Math.max(0, L.wary - dt);
-    // alarm: swim off when the player comes closer than ~9 m (also wakes a sleeping flock)
-    const fleeR = 8 + 2 * (N.n2(t * 0.02, 5.5) * 0.5 + 0.5);
+    // alarm: swim off when the player comes closer than 4-5 m (3 m if he crouches or stands still); wakes a sleeping flock
+    const fleeR = env.calm ? 3 : 4 + (N.n2(t * 0.02, 5.5) * 0.5 + 0.5);
     if (cam && dmin < fleeR && L.st !== 'flee') {
       const f = fleeSpot(L.p, cam); if (f) {
-        go(f, 'flee'); L.stT = 25; L.wary = 30 + R() * 30; L.fleeFrom = new V(cam.x, 0, cam.z);
+        go(f, 'flee'); L.stT = 15; L.wary = 20 + R() * 20; L.fleeFrom = new V(cam.x, 0, cam.z);
         if (R() < 0.65 && env.quack) env.quack(L.p.x, L.p.z, 3 + Math.floor(R() * 4), 1);
         for (const k of ducks) { k.act = 'swim'; k.actT = 6 + R() * 6; k.tuck = Math.min(k.tuck, 0.3); }
       }
     }
-    const alertNow = cam && dmin < 14 + (L.wary > 0 ? 6 : 0);
+    const alertNow = cam && dmin < 10 + 2 * (N.n2(t * 0.03, 8.1) * 0.5 + 0.5) + (L.wary > 0 ? 3 : 0);
     L.alert = approach(L.alert, alertNow || L.st === 'flee' ? 1 : 0, dt * (alertNow ? 2 : 0.3));
     // ---- states
     L.stT -= dt;
@@ -229,14 +261,14 @@ export function createDucks(world, Q, scene) {
       moving = d > 1; lsp = 0.95;
       if (!moving || L.stT < 0) {
         // keep going if the player is still close, else settle down warily
-        if (cam && dmin < 20) { const f = fleeSpot(L.p, cam); if (f && f.distanceTo(L.p) > 3) { go(f, 'flee'); L.stT = 20; } else { L.st = 'linger'; L.stT = 20; } }
-        else if (night) go(pickSpot(L.p, { night: true, cam, near: true }), 'roost');
-        else { L.st = 'linger'; L.stT = 30 + R() * 40; L.home.copy(L.p); L.tgt.copy(L.p); }
+        if (cam && dmin < 7) { const f = fleeSpot(L.p, cam); if (f && f.distanceTo(L.p) > 2) { go(f, 'flee'); L.stT = 12; } else { L.st = 'linger'; L.stT = 20; L.home.copy(L.p); L.tgt.copy(L.p); } }
+        // settle down warily where they are (at night: wait 1-2 min, then go back to sleep)
+        else { L.st = 'linger'; L.stT = night ? 60 + R() * 60 : 30 + R() * 40; L.home.copy(L.p); L.tgt.copy(L.p); }
       }
     } else if (L.st === 'travel' || L.st === 'roost') {
-      moving = d > 1.2; lsp = (L.st === 'roost' ? 0.34 : 0.28) * (0.8 + 0.4 * (N.n2(t * 0.05 + L.ph, 3.1) * 0.5 + 0.5));
+      moving = d > 1.2; lsp = (L.st === 'roost' ? 0.34 : 0.32) * (0.8 + 0.4 * (N.n2(t * 0.05 + L.ph, 3.1) * 0.5 + 0.5));
       if (alertNow) lsp *= 0.6;
-      if (!moving) { if (L.st === 'roost') { L.st = 'sleep'; L.home.copy(L.p); } else { L.st = 'linger'; L.stT = 60 + R() * 180; L.home.copy(L.p); } L.visits.push([t, L.p.x, L.p.z]); }
+      if (!moving) { if (L.st === 'roost') { L.st = 'sleep'; L.home.copy(L.p); L.roostP = L.tgt.clone(); L.roostP.kind = L.tgtKind; L.roostP.side = L.tgtSide; } else { L.st = 'linger'; L.stT = 80 + R() * 160; L.home.copy(L.p); } L.visits.push([t, L.p.x, L.p.z]); }
       // no progress for a long time (blocked) -> another place
       L.prog += dt; if (L.prog > 40) { if (L.p.distanceTo(L.progP) < 4) go(pickSpot(L.p, { night, cam }), L.st); L.prog = 0; L.progP.copy(L.p); }
     } else if (L.st === 'linger') {
@@ -244,14 +276,20 @@ export function createDucks(world, Q, scene) {
       L.nextPause -= dt;
       if (!alertNow && L.nextPause < 0 && L.pause <= 0) { L.pause = 8 + R() * 16; L.nextPause = 18 + R() * 30; }
       if (L.pause > 0) L.pause -= dt;
-      else if (d < 0.6) { for (let k = 0; k < 20; k++) { const a = R() * 6.28, r = 1 + R() * 4, x = L.home.x + Math.cos(a) * r, z = L.home.z + Math.sin(a) * r; if (wet(x, z, -0.25, -9)) { L.tgt.set(x, 0, z); break; } } }
+      else if (d < 0.6) { for (let k = 0; k < 20; k++) { const a = R() * 6.28, r = 1 + R() * 4, x = L.home.x + Math.cos(a) * r, z = L.home.z + Math.sin(a) * r; if (wet(x, z, -0.25, -9) && (!cam || Math.hypot(x - cam.x, z - cam.z) > 7)) { L.tgt.set(x, 0, z); break; } } }
       else { moving = true; lsp = 0.12; }
-      if (L.stT < 0 && !alertNow) go(pickSpot(L.p, { cam, away: L.wary > 0 && L.fleeFrom ? tv.set(L.p.x - L.fleeFrom.x, 0, L.p.z - L.fleeFrom.z) : null }), 'travel');
+      if (L.stT < 0 && !alertNow && night) {
+        // back to sleep: the same place if the player has gone, else the other side of the bar or another backwater
+        const rp = L.roostP, far = (q) => !cam || Math.hypot(q.x - cam.x, q.z - cam.z) > 12;
+        let nt = rp && far(rp) ? rp : null;
+        if (!nt && rp && rp.kind === 'bar') { const alt = barRoost(-rp.side); if (alt && far(alt)) nt = alt; }
+        go(nt || pickSpot(L.p, { night: true, cam }), 'roost');
+      } else if (L.stT < 0 && !alertNow) go(pickSpot(L.p, { cam, away: L.wary > 0 && L.fleeFrom ? tv.set(L.p.x - L.fleeFrom.x, 0, L.p.z - L.fleeFrom.z) : null }), 'travel');
     } else if (L.st === 'wake') {
       if (L.stT < 0) go(pickSpot(L.p, { cam }), 'travel');
     }
     // the player walking up to where the flock is heading: pick another place
-    if (cam && (L.st === 'travel' || L.st === 'roost') && Math.hypot(L.tgt.x - cam.x, L.tgt.z - cam.z) < 15) go(pickSpot(L.p, { night: L.st === 'roost', cam }), L.st);
+    if (cam && (L.st === 'travel' || L.st === 'roost') && Math.hypot(L.tgt.x - cam.x, L.tgt.z - cam.z) < (L.st === 'roost' ? 9 : 6)) go(pickSpot(L.p, { night: L.st === 'roost', cam }), L.st);
     // ---- steering around land: probe ahead and turn to the first free direction
     if (moving && d > 1e-3) {
       tv.normalize(); const a0 = Math.atan2(tv.z, tv.x); let ok = null;
@@ -263,9 +301,11 @@ export function createDucks(world, Q, scene) {
       if (!ok) { L.turnS = -L.turnS; ok = [-L.dir.x, -L.dir.z]; }
       tv.set(ok[0], 0, ok[1]); L.dir.lerp(tv, Math.min(1, dt * (L.st === 'flee' ? 2.5 : 0.8))).normalize();
       const nx = L.p.x + L.dir.x * lsp * dt, nz = L.p.z + L.dir.z * lsp * dt;
-      if (H(nx, nz) < -0.18) { L.p.x = nx; L.p.z = nz; } else { lsp = 0; L.turnS = -L.turnS; }
+      if (H(nx, nz) < -0.08 || H(nx, nz) < H(L.p.x, L.p.z) - 1e-4) { L.p.x = nx; L.p.z = nz; } else { lsp = 0; L.turnS = -L.turnS; }
     } else lsp = 0;
     L.v.copy(L.dir).multiplyScalar(lsp);
+    // breadcrumbs of the leader's way: a duck cut off by land follows them round the obstacle
+    { const tr = L.trail, lt = tr[tr.length - 1]; if (!lt || Math.hypot(lt.x - L.p.x, lt.z - L.p.z) > 1.5) { tr.push(L.p.clone()); if (tr.length > 220) tr.shift(); } }
     // rare quiet quacks by day
     L.quackT -= dt;
     if (L.quackT < 0) { L.quackT = 90 + R() * 240; if (!night && L.st !== 'sleep' && env.quack) env.quack(L.p.x, L.p.z, 2 + Math.floor(R() * 3), 0.6); }
@@ -285,8 +325,19 @@ export function createDucks(world, Q, scene) {
       }
       if ((alert > 0.5 || fleeing) && k.stray) { k.stray = 0; k.offTime = 0; }
       k.off.lerp(k.offT, Math.min(1, dt * (fleeing ? 0.6 : 0.15)));
-      const goal = sleeping ? leader.home.clone().add(k.off) : leader.p.clone().addScaledVector(side, k.off.x).addScaledVector(leader.dir, k.off.z);
+      let goal = sleeping ? leader.home.clone().add(k.off) : leader.p.clone().addScaledVector(side, k.off.x).addScaledVector(leader.dir, k.off.z);
       if (i === 0 && n > 1 && !sleeping) goal.lerp(leader.p, 0.6);
+      // cut off from the goal by land: head for the furthest point of the leader's trail that is in plain sight
+      k.viaT -= dt;
+      if (k.viaT <= 0) {
+        k.viaT = 0.5 + R() * 0.3; k.via = null;
+        const gx = goal.x - k.p.x, gz = goal.z - k.p.z, gd = Math.hypot(gx, gz);
+        if (gd > 2.5 && !clear(k.p.x, k.p.z, gx / gd, gz / gd, gd)) {
+          const tr = leader.trail;
+          for (let j = tr.length - 1; j >= 0; j -= 1) { const q2 = tr[j], dx = q2.x - k.p.x, dz = q2.z - k.p.z, dd = Math.hypot(dx, dz); if (dd < 0.8 || dd > 45) continue; if (clear(k.p.x, k.p.z, dx / dd, dz / dd, dd)) { k.via = q2; break; } }
+        }
+      }
+      if (k.via) goal = k.via.clone();
       // desired velocity: steer to the goal, keep personal pace, avoid crowding
       const des = tv.subVectors(goal, k.p);
       const dist = des.length();
@@ -297,20 +348,31 @@ export function createDucks(world, Q, scene) {
       if (k.act === 'upend' || k.act === 'dabble') want *= 0.1;
       if (dist > 1e-3) des.multiplyScalar(want / dist); else des.set(0, 0, 0);
       des.addScaledVector(leader.v, dist < 1.5 ? 0.6 : 0.2);
+      // a duck the player has walked right up to shies away at once, without waiting for the flock
+      if (env.cam) { const ex = k.p.x - env.cam.x, ez = k.p.z - env.cam.z, ed = Math.hypot(ex, ez); if (ed < 4.5 && ed > 1e-3) { const f = (4.5 - ed) / 4.5 * 1.4; des.x += ex / ed * f; des.z += ez / ed * f; } }
       const sep = sleeping ? 0.38 : 0.55;
       for (let j = 0; j < n; j++) {
         if (j === i) continue; const o = ducks[j], dx = k.p.x - o.p.x, dz = k.p.z - o.p.z, dd = Math.hypot(dx, dz);
         if (dd < sep && dd > 1e-4) { const f = (sep - dd) / sep * 0.5; des.x += dx / dd * f; des.z += dz / dd * f; }
       }
       // accelerate toward the desired velocity (hard paddling when fleeing)
-      const acc = (fleeing ? 1.2 : 0.35) * dt; tv.set(des.x - k.v.x, 0, des.z - k.v.z); const al = tv.length(); if (al > acc) tv.multiplyScalar(acc / al);
+      const acc = (fleeing || (env.cam && Math.hypot(k.p.x - env.cam.x, k.p.z - env.cam.z) < 4.5) ? 1.4 : 0.35) * dt; tv.set(des.x - k.v.x, 0, des.z - k.v.z); const al = tv.length(); if (al > acc) tv.multiplyScalar(acc / al);
       k.v.add(tv);
       const spd = k.v.length();
       // strokes: speed pulses slightly with each paddle
       k.stroke += dt * (4.5 + spd * 9);
       const pulse = 1 + 0.12 * Math.sin(k.stroke) * Math.min(1, spd / 0.15);
       const nx = k.p.x + k.v.x * pulse * dt, nz = k.p.z + k.v.z * pulse * dt;
-      const hn = H(nx, nz); if (hn < -0.12 || hn < H(k.p.x, k.p.z) - 1e-4) { k.p.x = nx; k.p.z = nz; } else k.v.multiplyScalar(0.5);
+      const hn = H(nx, nz), h0 = H(k.p.x, k.p.z);
+      if (hn < -0.08 || hn < h0 - 1e-4) { k.p.x = nx; k.p.z = nz; }
+      else { // slide along the shore: the nearest turn of the heading that is open water
+        let moved = false;
+        for (const da of [0.5, -0.5, 1.0, -1.0, 1.6, -1.6, 2.3, -2.3]) {
+          const c = Math.cos(da), sn = Math.sin(da), vx = (k.v.x * c - k.v.z * sn) * pulse * dt, vz = (k.v.x * sn + k.v.z * c) * pulse * dt;
+          if (H(k.p.x + vx, k.p.z + vz) < -0.08) { k.p.x += vx; k.p.z += vz; k.v.set(vx / (pulse * dt), 0, vz / (pulse * dt)); moved = true; break; }
+        }
+        if (!moved) k.v.multiplyScalar(0.5);
+      }
       // heading turns smoothly toward the motion (a sleeping bird turns very slowly)
       if (spd > (sleeping ? 0.02 : 0.04)) {
         const ty = Math.atan2(-k.v.z, k.v.x); let dy = ty - k.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
@@ -343,7 +405,7 @@ export function createDucks(world, Q, scene) {
       }
       // sleep: head turned back and laid on the back, bill under the wing (each bird tucks in at its own moment)
       if (sleeping) k.tuckDelay -= dt;
-      const tuckT = sleeping && k.tuckDelay < 0 ? 1 : 0;
+      const tuckT = sleeping && k.tuckDelay < 0 && alert < 0.5 ? 1 : 0;
       if (!sleeping) k.tuckDelay = 5 + R() * 40;
       k.tuck = approach(k.tuck, tuckT, dt * (tuckT ? 0.5 : 0.35));
       // targets for body pitch / head pose
