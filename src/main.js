@@ -13,7 +13,7 @@ import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
 
-const VERSION = '0.0.36 alpha';
+const VERSION = '0.0.37 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -137,6 +137,9 @@ const showEl = (el, x, y) => { el.style.left = x + 'px'; el.style.top = y + 'px'
 const onJumpBtn = (x, y) => { if (!jumpEl.classList.contains('vis')) return false; const b = jumpEl.getBoundingClientRect(); return Math.hypot(x - (b.left + b.width / 2), y - (b.top + b.height / 2)) < b.width * 0.7; };
 addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT') return; keys[e.code] = true; if (e.code === 'Space' && started) { jumpReq = true; e.preventDefault(); } if (e.code === 'Escape' && photo) setPhoto(false); });
 addEventListener('keyup', (e) => { keys[e.code] = false; });
+// debug: U in the free camera shows markers above the snakes
+let snakeMarks = null, showMarks = false;
+addEventListener('keydown', (e) => { if (e.code === 'KeyU' && freeCam) showMarks = !showMarks; });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 const pad = $('pad'), stick = $('stick'), knob = $('knob');
 pad.addEventListener('pointerdown', (e) => {
@@ -483,6 +486,10 @@ function frame(now) {
   fauna.update(dt, gameTime, Object.assign(env, fenv, { cam: camera.position, yaw: S.mode === 'walk' ? P.yaw + Math.PI / 2 : 0 }));
   ducks.update(dt, gameTime, env);
   // snakes notice only the walking player; the free camera and the auto flight are invisible to them
+  if (showMarks && freeCam) {
+    if (!snakeMarks) { snakeMarks = snakes.list().map(() => { const m = new THREE.Mesh(new THREE.ConeGeometry(0.25, 0.7, 12).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xff3020, depthTest: false })); m.renderOrder = 99; scene.add(m); return m; }); }
+    snakes.list().forEach((s, i) => { const m = snakeMarks[i]; m.visible = true; m.position.set(s.hd.x, Math.max(world.H(s.hd.x, s.hd.z), 0) + 1.2 + 0.15 * Math.sin(gameTime * 4), s.hd.z); m.scale.setScalar(Math.max(1, camera.position.distanceTo(m.position) / 25)); });
+  } else if (snakeMarks) snakeMarks.forEach((m) => { m.visible = false; });
   snakes.update(dt, gameTime, Object.assign({}, env, { cover: W.cover, rain: W.rain, cam: S.mode === 'walk' && !freeCam ? camera.position : null }));
   camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
   U.uCampOn.value = S.camp ? 1 : 0;

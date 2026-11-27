@@ -116,7 +116,7 @@ export function createSnakes(world, Q, scene) {
   }
 
   // ---------- spots ----------
-  const islandPt = (emin, emax) => { for (let t = 0; t < 300; t++) { const x = (R() * 2 - 1) * 28, z = zc0 + (R() * 2 - 1) * 20, e = islandE(x, z); if (e > emin && e < emax && H(x, z) > 0.12) return new V(x, 0, z); } return new V(0, 0, zc0); };
+  const islandPt = (emin, emax, hmax = 99) => { for (let t = 0; t < 400; t++) { const x = (R() * 2 - 1) * 28, z = zc0 + (R() * 2 - 1) * 20, e = islandE(x, z), h = H(x, z); if (e > emin && e < emax && h > 0.12 && h < hmax) return new V(x, 0, z); } return hmax < 99 ? islandPt(emin, emax) : new V(0, 0, zc0); };
   const islandWater = () => { for (let t = 0; t < 300; t++) { const x = (R() * 2 - 1) * 32, z = zc0 + (R() * 2 - 1) * 24, h = H(x, z); if (h < -0.25 && h > -1.6 && islandE(x, z) < 1.45) return new V(x, 0, z); } return new V(0, 0, zc0 + 16); };
   // the bank snake: a stretch of the mainland shore opposite the island
   const bankX = (R() - 0.5) * 50, bankSide = R() < 0.5 ? -1 : 1;
@@ -172,12 +172,12 @@ export function createSnakes(world, Q, scene) {
   // ---------- behaviour ----------
   const Hg = world.Hmesh || H; // height of the visible terrain mesh (triangles), not the analytic field
   const pickGoal = (s, env) => {
-    s.goalT = 0;
+    s.goalT = 0; s.gD = undefined;
     const sunny = env.sunInt * (1 - (env.cover || 0)) > 0.35 && env.day > 0.5;
     const r = R();
-    if (sunny && r < 0.35) { s.state = 'toBask'; s.goal = s.bank ? bankPt(false) : islandPt(0.55, 0.95); return; }
-    if (r < 0.65) { s.state = 'crawl'; s.goal = s.bank ? (R() < 0.5 ? bankPt(true) : bankPt(false)) : (R() < 0.45 ? islandWater() : islandPt(0.15, 0.9)); return; }
-    s.state = 'crawl'; s.goal = s.bank ? bankPt(false) : islandPt(0.15, 0.9);
+    if (sunny && r < 0.35) { s.state = 'toBask'; s.goal = s.bank ? bankPt(false) : islandPt(0.78, 1.0, 0.42); return; } // open sand at the water
+    if (r < 0.65) { s.state = 'crawl'; s.goal = s.bank ? (R() < 0.5 ? bankPt(true) : bankPt(false)) : (R() < 0.45 ? islandWater() : islandPt(0.65, 1.0)); return; }
+    s.state = 'crawl'; s.goal = s.bank ? bankPt(false) : (R() < 0.85 ? islandPt(0.65, 1.0) : islandPt(0.15, 0.65)); // mostly the shore band
   };
   const tmp = new V(), side = new V(), upv = new V(), T = new V(), UP = new V(0, 1, 0);
   const Pl = [], Pw = [], Pn = [], Tn = [];
@@ -264,15 +264,15 @@ export function createSnakes(world, Q, scene) {
       if (!wantHide && (s.state === 'hide' || s.state === 'hidden')) { s.hidden = Math.max(0, s.hidden - dt * 0.3); if (s.hidden <= 0) { s.state = 'crawl'; pickGoal(s, env); } }
       // flee from the player
       const dp = cam ? Math.hypot(cam.x - s.hd.x, cam.z - s.hd.z) : 99;
-      if (!s.noFlee && dp < 3.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
+      if (!s.noFlee && dp < 2.0 && cam && (s.state === 'bask' || s.state === 'crawl' || s.state === 'toBask' || s.state === 'pose') && cam.y - H(cam.x, cam.z) < 4) {
         s.state = 'flee'; s.stateT = 4 + R() * 3; s.pose = null; s.fleeDive = R() < 0.35;
         const away = new V(s.hd.x - cam.x, 0, s.hd.z - cam.z).normalize();
         const w = s.bank ? bankPt(true) : islandWater();
         s.goal = new V(w.x - s.hd.x, 0, w.z - s.hd.z).normalize().dot(away) > 0 ? w : s.hd.clone().addScaledVector(away, 4);
       }
       const inWater = Hg(s.hd.x, s.hd.z) < -0.05;
-      if (dp > 9) s.lurked = false;
-      if (!s.noFlee && cam && !s.lurked && dp > 3 && dp < 6 && !inWater && (s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) { s.lurked = true; if (R() < 0.5) startLurk(s); }
+      if (dp > 7) s.lurked = false;
+      if (!s.noFlee && cam && !s.lurked && dp > 2.5 && dp < 4 && !inWater && (s.state === 'crawl' || s.state === 'toBask') && cam.y - H(cam.x, cam.z) < 4) { s.lurked = true; if (R() < 0.5) startLurk(s); }
       if (inWater && !s.splashed) { env.ripple(s.hd.x, s.hd.z, 0.1); s.splashed = true; }
       if (!inWater) s.splashed = false;
       s.wet += ((inWater ? 1 : 0) - s.wet) * Math.min(1, dt * 0.8);
@@ -289,7 +289,10 @@ export function createSnakes(world, Q, scene) {
         else if ((s.state === 'crawl' || s.state === 'hide') && toG < 0.35) { if (s.state === 'hide') s.state = 'hidden'; else pickGoal(s, env); }
         if (!s.goal) pickGoal(s, env);
         // a goal that cannot be reached (rocks, deep water) is dropped after a while
-        if (s.state === 'crawl' || s.state === 'toBask') { s.goalT = (s.goalT || 0) + dt; if (s.goalT > 35) { s.goalT = 0; pickGoal(s, env); } } else s.goalT = 0;
+        if ((s.state === 'crawl' || s.state === 'toBask') && s.goal) { // drop a goal only when no progress is made toward it
+          s.goalT = (s.goalT || 0) + dt;
+          if (s.goalT > 12) { const gd = Math.hypot(s.goal.x - s.hd.x, s.goal.z - s.hd.z); if (s.gD !== undefined && s.gD - gd < 0.5) pickGoal(s, env); else { s.goalT = 0; s.gD = gd; } }
+        } else s.goalT = 0;
       }
       // ---- diving: down at ~30°, swim or lie on the bottom, come back up ----
       const depthHere = -Hg(s.hd.x, s.hd.z);
@@ -324,6 +327,7 @@ export function createSnakes(world, Q, scene) {
       s.slowK += ((s.slowT > 0 ? 0.04 : 1) - s.slowK) * Math.min(1, dt * 0.9);
       if (s.state === 'crawl' && !s.dv) want *= s.slowK;
       if (s.state === 'hidden') s.hidden = Math.min(1, s.hidden + dt * 0.3);
+      if (s.state !== 'pose') { const th = 1.4 * s.amp * (s.state === 'flee' ? 0.85 : 1), J = 1 - th * th / 4 + Math.pow(th, 4) / 64; s.Jc = Math.max(0.45, J); want /= s.Jc; }
       s.spd += (want - s.spd) * Math.min(1, dt * 2.5);
       s.flat += ((s.state === 'bask' ? 1 : 0) - s.flat) * Math.min(1, dt * 0.4);
       // ---- head motion ----
@@ -350,7 +354,7 @@ export function createSnakes(world, Q, scene) {
           { const lx = s.ax.x + Math.cos(s.axTh) * 1.1, lz = s.ax.z + Math.sin(s.axTh) * 1.1;
             if (Hg(lx, lz) < -1.6 || (s.bank ? Math.abs(lx - bankX) > 25 : islandE(lx, lz) > 1.45)) dTh += 1.2; }
           // wide turns only: the axis turns on a radius of at least ~half the body length, so a U-turn is a broad arc
-          const Rt = Math.max(0.5, 0.55 * s.L), maxTurn = step / Rt;
+          const Rt = Math.max(0.5, 0.55 * s.L), maxTurn = step * (s.Jc || 1) / Rt; // radius measured along the forward progress
           const dA = Math.max(-maxTurn, Math.min(maxTurn, dTh * dt * 1.5));
           s.axTh += dA;
           s.turnK += (Math.min(1, Math.abs(dA) / Math.max(1e-6, maxTurn)) * Math.sign(dA) - s.turnK) * Math.min(1, dt * 2);
