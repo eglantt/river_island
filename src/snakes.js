@@ -143,7 +143,7 @@ export function createSnakes(world, Q, scene) {
     const mat = mkMat(look.base, look.spots, L);
     // body tube
     const nV = NODES * (RAD + 1), pos = new Float32Array(nV * 3), nor = new Float32Array(nV * 3), aS = new Float32Array(nV * 2), idx = [];
-    for (let i = 0; i < NODES - 1; i++) for (let j = 0; j < RAD; j++) { const a = i * (RAD + 1) + j, b = a + 1, c = a + RAD + 1, d = c + 1; idx.push(a, c, b, b, c, d); }
+    for (let i = 0; i < NODES - 1; i++) for (let j = 0; j < RAD; j++) { const a = i * (RAD + 1) + j, b = a + 1, c = a + RAD + 1, d = c + 1; idx.push(a, b, c, b, d, c); } // outward-facing (counter-clockwise seen from outside)
     for (let i = 0; i < NODES; i++) for (let j = 0; j <= RAD; j++) { const q = i * (RAD + 1) + j; aS[q * 2] = i / (NODES - 1) * L; aS[q * 2 + 1] = j / RAD; }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('aS', new THREE.BufferAttribute(aS, 2));
