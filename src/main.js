@@ -12,9 +12,8 @@ import { createCamp } from './camp.js';
 import { createDucks } from './ducks.js';
 import { createSnakes } from './snakes.js';
 import { createLightning } from './lightning.js';
-import { createTornLeaves } from './leaves.js';
 
-const VERSION = '0.0.46 alpha';
+const VERSION = '0.0.47 alpha';
 const $ = (id) => document.getElementById(id);
 document.querySelectorAll('.ver').forEach((e) => { e.textContent = 'Версия ' + VERSION; });
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -23,17 +22,17 @@ const dpr = window.devicePixelRatio || 1;
 
 // ---------- quality tiers ----------
 const TIERS = {
-  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 500, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, reedIsle: 800, leaves: 2400, leafMode: 'leaves', algae: 2000, bankBush: 50, torn: 60 },
-  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 800, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, reedIsle: 1500, leaves: 5000, leafMode: 'leaves', algae: 3600, bankBush: 80, torn: 150 },
-  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 1100, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, reedIsle: 2200, leaves: 10000, leafMode: 'leaves', algae: 5500, bankBush: 110, torn: 280 },
+  low: { name: 'Низкое', scale: 0.9, terr: 150, mtn: 256, grass: 11000, flowers: 380, reeds: 1700, forest: 650, far: 260, shadows: 0, bloom: 0, rain: 1800, ff: 15, lily: 500, dust: 60, bf: 8, df: 4, ducks: 2, smoke: 14, atlas: 192, cards: 34, bushCards: 13, spruceLv: 12, sprucePer: 6, forestCards: 20, variants: 2, reedWall: 1500, reedIsle: 800, leaves: 2400, leafMode: 'leaves', algae: 2000, bankBush: 50 },
+  med: { name: 'Среднее', scale: 1, terr: 190, mtn: 256, grass: 24000, flowers: 800, reeds: 2400, forest: 1300, far: 500, shadows: 1024, bloom: 0, rain: 4000, ff: 30, lily: 800, dust: 120, bf: 14, df: 6, ducks: 4, smoke: 22, atlas: 320, cards: 56, bushCards: 20, spruceLv: 17, sprucePer: 8, forestCards: 36, variants: 3, reedWall: 2600, reedIsle: 1500, leaves: 5000, leafMode: 'leaves', algae: 3600, bankBush: 80 },
+  high: { name: 'Высокое', scale: Math.min(dpr, 1.25), terr: 230, mtn: 512, grass: 45000, flowers: 1500, reeds: 3500, forest: 2300, far: 900, shadows: 1536, bloom: 1, rain: 8000, ff: 45, lily: 1100, dust: 200, bf: 22, df: 8, ducks: 5, smoke: 30, atlas: 512, cards: 80, bushCards: 27, spruceLv: 20, sprucePer: 9, forestCards: 50, variants: 4, reedWall: 4000, reedIsle: 2200, leaves: 10000, leafMode: 'leaves', algae: 5500, bankBush: 110 },
 };
 const WEATHER = {
-  clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0.08, mist: 0, storm: 0 },
-  partly: { name: 'Облачно', cover: 0.46, dark: 0.05, rain: 0, near: 120, far: 6000, wind: 0.22, mist: 0, storm: 0 },
-  overcast: { name: 'Пасмурно', cover: 0.86, dark: 0.42, rain: 0, near: 80, far: 3800, wind: 0.35, mist: 0.15, storm: 0 },
-  fog: { name: 'Туман', cover: 0.62, dark: 0.3, rain: 0, near: 2, far: 150, wind: 0.03, mist: 1, storm: 0 },
-  rain: { name: 'Дождь', cover: 0.93, dark: 0.55, rain: 0.75, near: 30, far: 1100, wind: 0.55, mist: 0.3, storm: 0 },
-  storm: { name: 'Гроза', cover: 1, dark: 0.75, rain: 1, near: 20, far: 750, wind: 0.95, mist: 0.2, storm: 1 },
+  clear: { name: 'Ясно', cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 },
+  partly: { name: 'Облачно', cover: 0.46, dark: 0.05, rain: 0, near: 120, far: 6000, wind: 0.1, mist: 0, storm: 0 },
+  overcast: { name: 'Пасмурно', cover: 0.86, dark: 0.42, rain: 0, near: 80, far: 3800, wind: 0.15, mist: 0.15, storm: 0 },
+  fog: { name: 'Туман', cover: 0.62, dark: 0.3, rain: 0, near: 2, far: 150, wind: -0.2, mist: 1, storm: 0 },
+  rain: { name: 'Дождь', cover: 0.93, dark: 0.55, rain: 0.75, near: 30, far: 1100, wind: 0.3, mist: 0.3, storm: 0 },
+  storm: { name: 'Гроза', cover: 1, dark: 0.75, rain: 1, near: 20, far: 750, wind: 0.6, mist: 0.2, storm: 1 },
 };
 // phones: 'Среднее' without live shadows
 const tier = (k) => Object.assign({}, TIERS[k], coarse && k === 'med' ? { shadows: 0 } : {});
@@ -59,14 +58,13 @@ const hemi = new THREE.HemisphereLight(0xbfd8ff, 0x334422, 1); scene.add(hemi);
 // lightning bolt
 const bolts = createLightning(scene, U);
 
-const noiseData = noiseTextureData(256);
-const nt = new THREE.DataTexture(noiseData, 256, 256, THREE.RGBAFormat);
+const nt = new THREE.DataTexture(noiseTextureData(256), 256, 256, THREE.RGBAFormat);
 nt.wrapS = nt.wrapT = THREE.RepeatWrapping; nt.magFilter = nt.minFilter = THREE.LinearFilter; nt.needsUpdate = true; U.tNoise.value = nt;
 const wn = new THREE.DataTexture(waterNormalData(256), 256, 256, THREE.RGBAFormat);
 wn.wrapS = wn.wrapT = THREE.RepeatWrapping; wn.magFilter = THREE.LinearFilter; wn.minFilter = THREE.LinearMipmapLinearFilter; wn.generateMipmaps = true; wn.needsUpdate = true; U.tWaterN.value = wn;
 
 let tierKey = S.quality === 'auto' ? (coarse ? 'med' : 'high') : S.quality, Q = tier(tierKey);
-let world = null, torn = null, fauna = null, ducks = null, snakes = null, camp = null, composer = null, bloom = null;
+let world = null, fauna = null, ducks = null, snakes = null, camp = null, composer = null, bloom = null;
 const audio = createAudio();
 
 function applyRenderQuality() {
@@ -95,7 +93,7 @@ function applyRenderQuality() {
 const P = { pos: new THREE.Vector3(), yaw: Math.PI / 2, pitch: 0.02, eye: 1.65, bob: 0, vy: 0, jy: 0, squat: 0, gy: 0, lastStep: 0, crouch: 0 };
 let curve = null, flyU = 0;
 function build() {
-  if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); snakes.dispose(); camp.dispose(); torn.dispose(); }
+  if (world) { scene.remove(world.group); disposeGroup(world.group); world.disposeExtra(); fauna.dispose(); ducks.dispose(); snakes.dispose(); camp.dispose(); }
   world = buildWorld(S.seed, Q); world.bakeImpostors(renderer); scene.add(world.group);
   { // frogs live at the lily pads and in the reeds near the island
     const pts = [], m4 = new THREE.Matrix4(), pads = world.meshes.pads;
@@ -106,7 +104,6 @@ function build() {
   }
   fauna = createFauna(world, Q, scene); ducks = createDucks(world, Q, scene); snakes = createSnakes(world, Q, scene);
   camp = createCamp(world, Q, scene, coarse); camp.setVisible(!!S.camp);
-  torn = createTornLeaves(world, Q, scene, noiseData);
   U.uCampA.value.set(camp.tentP.x, camp.tentP.z, camp.fireP.x, camp.fireP.z); U.uCampB.value.set(Math.cos(camp.yaw), Math.sin(camp.yaw), camp.halfW, camp.halfL);
   P.pos.set(world.spawn[0], world.H(world.spawn[0], world.spawn[1]) + P.eye, world.spawn[1]); P.pitch = 0.02; P.gy = P.pos.y; P.jy = 0; P.vy = 0;
   // face roughly west along the river, avoiding a trunk right in front
@@ -193,11 +190,19 @@ const touchUI = () => coarse && started && (S.mode === 'walk' || freeCam) && !ph
 pad.addEventListener('pointerup', up); pad.addEventListener('pointercancel', up);
 
 // ---------- environment state ----------
-const W = { cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0.08, mist: 0, storm: 0 };
+const W = { cover: 0.1, dark: 0, rain: 0, near: 120, far: 6500, wind: 0, mist: 0, storm: 0 };
 Object.assign(W, WEATHER[S.weather]);
 let weatherRate = 1 / 30, nextAuto = 3 + Math.random() * 3, autoClock = 0;
 let dbgA = null, dbgK = null, flash = 0, nextStrike = 5, strikeSeq = [], strikeKind = 'ground';
-let windS = -1, gameTime = 0;
+let windS = S.wind, gameTime = 0;
+// how close the nearest leafy crown is (0 far .. 1 under it), for the leaf rustle; refreshed twice a second
+let treeNearV = 0, treeNearT = 0;
+function treeNear() {
+  if ((treeNearT -= 1) > 0) return treeNearV; treeNearT = 30;
+  let d = 1e9; const c = camera.position;
+  for (const t of world.trunks) if (t[4] && t[3] !== 'dead') d = Math.min(d, Math.hypot(t[0] - c.x, t[1] - c.z) - t[4] * 0.3);
+  return (treeNearV = Math.min(1, Math.max(0, 1 - d / 22)));
+}
 const keysPal = [
   [-18, '#03050c', '#0a1020', '#000000'], [-9, '#0a1230', '#1d2650', '#24183a'], [-3, '#1c2c5a', '#b4685c', '#ff6a3a'],
   [2, '#365791', '#f0915a', '#ff9a5a'], [9, '#4a78c0', '#f0c391', '#ffc78e'], [24, '#3f7bd6', '#b8d3ec', '#ffeccc'], [60, '#2f6fd6', '#c4ddf3', '#fff4dd'],
@@ -276,14 +281,9 @@ function updateEnv(dt) {
   U.uFogCol.value.copy(fogC).lerp(tc.setRGB(0.6, 0.65, 0.7).multiplyScalar(day * 0.8 + 0.1), 0.25);
   renderer.setClearColor(fogC); U.uSkyFog.value.copy(fogC); U.uFogSky.value = 1 - sm(300, 5200, scene.fog.far);
   // wind
-  // wind speed from the weather (calm when clear .. strong and gusty in a thunderstorm); the settings slider adds to it
-  // (0.35 = as the weather has it); changes build up and die down over 10-20 s
-  { const wt = clamp(W.wind + (S.wind - 0.35), 0, 1); windS = windS < 0 ? wt : windS + (wt - windS) * Math.min(1, dt * 0.08); }
-  U.uWind.value = windS; U.uWindL.value = windS * windS;
-  { // in strong wind the direction wanders a little (up to ~15 deg)
-    const a = 0.557 + 0.26 * windS * windS * Math.sin(gameTime * 0.043) * Math.sin(gameTime * 0.017 + 1.3);
-    U.uWindDir.value.set(Math.cos(a), Math.sin(a));
-  }
+  windS += (clamp(S.wind + W.wind, 0, 1) - windS) * Math.min(1, dt * 0.4);
+  U.uWind.value = windS;
+  const wa = Math.sin(gameTime * 0.01) * 0.4; U.uWindDir.value.set(Math.cos(wa) * 0.9 + 0.1, Math.sin(wa) * 0.5 + 0.4).normalize();
   U.uCloudOff.value.addScaledVector(U.uWindDir.value, dt * (0.0012 + windS * 0.0035));
   U.uCloudOff.value.set(U.uCloudOff.value.x % 1, U.uCloudOff.value.y % 1);
   // particles
@@ -516,14 +516,13 @@ function frame(now) {
   snakes.update(dt, gameTime, Object.assign({}, env, { cover: W.cover, rain: W.rain, cam: S.mode === 'walk' && !freeCam ? camera.position : null }));
   camp.update(dt, gameTime, { weather: S.weather, rain: W.rain, storm: W.storm, night: env.night });
   U.uCampOn.value = S.camp ? 1 : 0;
-  torn.update(dt, U.uTime.value, camera.position, windS, windS * windS, U.uWindDir.value);
   if (audio.on) {
     const nd = fauna.nearest(camera.position); let pan = 0;
     if (nd.p) { const v = nd.p.clone().sub(camera.position); right.set(Math.cos(P.yaw), 0, -Math.sin(P.yaw)); pan = clamp(v.dot(right) / (nd.d + 0.01), -1, 1); }
     const nearW = clamp(1.2 - (camera.position.y - Math.max(0, world.H(camera.position.x, camera.position.z)) - 1.2) * 0.2 - world.H(camera.position.x, camera.position.z) * 0.35, 0.3, 1);
     if (camp.state && S.camp) { const d = camera.position.distanceTo(camp.fireP); audio.fireSound(Math.max(camp.state.fire, camp.state.out ? 0.15 : 0) * clamp(1 - d / 22, 0, 1) ** 1.5, W.rain); } else audio.fireSound(0, 0);
     const tentD = S.camp ? Math.hypot(camera.position.x - camp.tentP.x, camera.position.z - camp.tentP.z) : 1e9;
-    audio.update(dt, { volume: S.volume, wind: windS, gust: torn.gustAt(camera.position.x, camera.position.z), trees: torn.treeNear(camera.position.x, camera.position.z),
+    audio.update(dt, { volume: S.volume, wind: windS, gust: 0.5 + 0.5 * Math.sin(gameTime * 0.37) * Math.sin(gameTime * 0.11), trees: treeNear(),
       tent: clamp(1 - tentD / 14, 0, 1) ** 1.5 * clamp((windS * windS - 0.12) * 2.5, 0, 1), water: nearW, rain: W.rain,
       birds: (sm(4.5, 6, env.h) * (1 - sm(8.5, 10, env.h)) * 0.9 + 0.3 * env.day + 0.15 * sm(18.5, 19.5, env.h) * (1 - sm(20.5, 21.5, env.h))) * (1 - sm(0.2, 0.6, W.rain)),
       crickets: (0.2 * env.day + 0.85 * sm(-1, -6, env.el)) * env.dry, frogs: frogNight(env.h) * (1 - W.storm * 0.8) * (1 - sm(0.5, 1, W.rain) * 0.6), frogDay: (1 - frogNight(env.h)) * env.day * (0.6 * (1 - W.cover * 0.6) + 0.5 * U.uWet.value) * (1 - W.rain) * (1 - W.storm), lis: { x: camera.position.x, z: camera.position.z, yaw: P.yaw }, owl: sm(-6, -12, env.el) * env.dry,
@@ -553,6 +552,6 @@ function frame(now) {
 // boot after the loading message paints
 requestAnimationFrame(() => setTimeout(() => {
   build(); syncUI(); $('loadmsg').hidden = true; $('enter').hidden = false;
-  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, get snakes() { return snakes; }, testThunder, testCrackle, testFrogs, testMix, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, get torn() { return torn; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
+  window.__island = { get renderer() { return renderer; }, get ducks() { return ducks; }, get snakes() { return snakes; }, testThunder, testCrackle, testFrogs, testMix, strike(a, k) { W.storm = 1; nextStrike = 0; dbgA = a; dbgK = k; }, get flash() { return flash; }, get camp() { return camp; }, set(h, w, m) { if (h != null) S.hour = h; if (w) { S.weather = w; Object.assign(W, WEATHER[w]); } if (m) S.mode = m; }, pos: P, cam: camera, get world() { return world; }, U, get fps() { return fpsS; } };
   requestAnimationFrame(frame);
 }, 30));

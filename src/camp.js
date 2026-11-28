@@ -133,13 +133,13 @@ export function createCamp(world, Q, scene, coarse) {
       const bag = new THREE.CylinderGeometry(0.15, 0.15, 0.78, 14, 1); bag.rotateZ(Math.PI / 2); bag.translate(0, 0.2 + gl(0, -L / 2 + 0.3), -L / 2 + 0.3);
       inAcc.add(bag, (v) => (Math.abs(Math.abs(v.x) - 0.22) < 0.03 ? cStrap : (N.n2(v.x * 9, v.y * 9) > 0 ? cBag : cBag2)), () => 0);
       for (const sx of [-1, 1]) { const end = new THREE.CircleGeometry(0.15, 14); end.rotateY(sx * Math.PI / 2); end.translate(sx * 0.39, 0.2 + gl(0, -L / 2 + 0.3), -L / 2 + 0.3); inAcc.add(end, (v) => tmp.copy(cBag2).lerp(cBag, Math.hypot(v.y - 0.2, v.z + L / 2 - 0.3) * 5), () => 0); }
-      const px = 0.55 * (R() < 0.5 ? -1 : 1), pz = 0.15;
+      const px = 0.32 * (R() < 0.5 ? -1 : 1), pz = 0.15; /* well clear of the sloping roof (it is only ~0.55 m high at 0.8 m from the axis) */
       const body = new THREE.BoxGeometry(0.2, 0.46, 0.32, 2, 3, 2); body.translate(0, 0.28, 0);
       const BP = body.attributes.position; for (let i = 0; i < BP.count; i++) { BP.setX(i, BP.getX(i) * (1 - 0.15 * (BP.getY(i) - 0.05))); BP.setZ(i, BP.getZ(i) * (0.95 + 0.1 * Math.sin(BP.getY(i) * 6))); }
       body.computeVertexNormals();
       const flap = new THREE.BoxGeometry(0.22, 0.05, 0.34); flap.translate(0, 0.52, 0.01);
       const pocket = new THREE.BoxGeometry(0.07, 0.18, 0.22); pocket.translate(-Math.sign(px) * 0.12, 0.22, 0);
-      for (const g of [body, flap, pocket]) { g.rotateZ(-Math.sign(px) * 0.25); g.translate(px, gl(px, pz) + 0.02, pz); inAcc.add(g, (v) => (g === body ? cPack : cPack2), () => 0); }
+      for (const g of [body, flap, pocket]) { g.rotateZ(-Math.sign(px) * 0.12); g.translate(px, gl(px, pz) + 0.02, pz); inAcc.add(g, (v) => (g === body ? cPack : cPack2), () => 0); }
     }
     const inside = new THREE.Mesh(inAcc.build(), patch(new THREE.MeshLambertMaterial({ vertexColors: true }), 'tentin', 0)); inside.receiveShadow = true;
     const tg = new THREE.Group(); tg.add(tent, poles, ropes, inside);
